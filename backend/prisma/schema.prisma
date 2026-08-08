@@ -28,6 +28,8 @@ model Post {
   rationale String   @default("")
   sources   String   @default("[]")
   keywords  String   @default("[]")
+  candidatesCount Int @default(0)
+  topicId   String?
   createdAt DateTime @default(now())
 }
 

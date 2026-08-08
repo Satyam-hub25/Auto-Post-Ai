@@ -129,12 +129,51 @@ router.get('/analytics/:agentId', async (req: Request, res: Response) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
+    // Score Averages
+    let totalScore = 0, totalNovelty = 0, totalSubstance = 0, totalCredibility = 0, totalRelevance = 0, totalTimeliness = 0;
+    let evalCount = 0;
+    const rejectionReasons = new Map<string, number>();
+
+    for (const c of candidates) {
+      if (c.evaluationData) {
+        const d: any = c.evaluationData;
+        totalScore += d.score || 0;
+        totalNovelty += d.novelty || 0;
+        totalSubstance += d.substance || 0;
+        totalCredibility += d.credibility || 0;
+        totalRelevance += d.relevance || 0;
+        totalTimeliness += d.timeliness || 0;
+        evalCount++;
+      }
+      if (c.status === 'REJECTED' && c.reason) {
+        // Simplify reason by taking first sentence or up to 60 chars to group them
+        const baseReason = c.reason.split('.')[0].substring(0, 60);
+        rejectionReasons.set(baseReason, (rejectionReasons.get(baseReason) || 0) + 1);
+      }
+    }
+
+    const averages = evalCount > 0 ? {
+      score: Math.round(totalScore / evalCount),
+      novelty: Math.round(totalNovelty / evalCount),
+      substance: Math.round(totalSubstance / evalCount),
+      credibility: Math.round(totalCredibility / evalCount),
+      relevance: Math.round(totalRelevance / evalCount),
+      timeliness: Math.round(totalTimeliness / evalCount),
+    } : null;
+
+    const topRejections = Array.from(rejectionReasons.entries())
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
     res.json({
       postsPerDay,
       acceptanceRate: { accepted, rejected },
       topSources,
       totalPosts: posts.length,
       totalTopics: candidates.length,
+      averages,
+      topRejections,
     });
   } catch (error) {
     res.status(500).json({ error: 'Internal Server Error', message: 'Failed to fetch analytics', statusCode: 500 });

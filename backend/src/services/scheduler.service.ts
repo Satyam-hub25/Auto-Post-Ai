@@ -80,9 +80,16 @@ export class SchedulerService {
       console.log(`\n[Cycle] Step 2/5: LOCAL PRE-FILTERING (Removing obvious noise)...`);
       const filteredCandidates = candidates.filter(c => {
         const text = (c.title + ' ' + (c.summary || '')).toLowerCase();
-        if (text.startsWith('ask hn:') && !text.includes('release')) return false; // filter out general questions
-        if (text.includes('watch "learn freelance')) return false; // filter specific noise from prompt
-        if (text.length < 20) return false; // filter extreme short content
+        
+        // Fast hard rejections for promotional/generic content
+        const blockedKeywords = ['discount', 'ticket', 'sponsor', 'event', 'playlist', 'tutorial', 'marketing', 'promo', 'career advice'];
+        if (blockedKeywords.some(kw => text.includes(kw))) return false;
+        
+        // General question filtering
+        if (text.startsWith('ask hn:') && !text.includes('release')) return false;
+        if (text.startsWith('tell hn:') && !text.includes('release')) return false;
+        
+        if (text.length < 20) return false;
         return true;
       });
       console.log(`[Cycle]   → Stage 1 complete. ${filteredCandidates.length}/${candidates.length} passed local filter.`);
@@ -93,20 +100,21 @@ export class SchedulerService {
       }
 
       // ── Step 3: STAGE 2 (LLM BATCH EVALUATION & MEMORY CHECK) ──
-      console.log(`\n[Cycle] Step 3/5: BATCH EDITORIAL JUDGMENT (evaluating top 5 candidates)...`);
+      console.log(`\n[Cycle] Step 3/5: BATCH EDITORIAL JUDGMENT (evaluating top 5-8 candidates)...`);
       const systemPrompt = agent.voiceGuide || '';
       const recentPosts = await memoryService.getRecentContext(agentId, 10);
       
       const evaluated = await editorialService.evaluateCandidates(
         agentId,
-        filteredCandidates.slice(0, 5), // Only batch send the top 5 filtered candidates
+        filteredCandidates.slice(0, 8), // Evaluate up to 8 candidates
         systemPrompt,
         recentPosts
       );
 
-      const accepted = evaluated.filter(e => e.status === 'ACCEPTED' || e.status === 'CONSIDER').sort((a, b) => b.score - a.score);
+      // ONLY ACCEPT if score >= 80, handled natively by editorial service now, but we'll enforce the sort here
+      const accepted = evaluated.filter(e => e.status === 'ACCEPTED').sort((a, b) => b.score - a.score);
       const rejected = evaluated.filter(e => e.status === 'REJECTED');
-      console.log(`[Cycle]   → Accepted/Considered: ${accepted.length}, Rejected: ${rejected.length}`);
+      console.log(`[Cycle]   → Accepted: ${accepted.length}, Rejected/Considered: ${evaluated.length - accepted.length}`);
 
       if (accepted.length === 0) {
         console.log(`[Cycle]   → No suitable topic found. Waiting for next cycle.`);
@@ -134,6 +142,8 @@ export class SchedulerService {
           rationale: postContent.rationale,
           sources: JSON.stringify(postContent.sources),
           keywords: JSON.stringify([]),
+          candidatesCount: candidates.length,
+          topicId: topTopic.id, // Linking back to the TopicCandidate for scores
         }
       });
 

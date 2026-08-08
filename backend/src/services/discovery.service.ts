@@ -11,7 +11,7 @@ export interface DiscoverySource {
 export class HackerNewsDiscovery implements DiscoverySource {
   async discover(domain: string): Promise<TopicCandidate[]> {
     try {
-      const url = `http://hn.algolia.com/api/v1/search?query=${encodeURIComponent(domain)}&tags=story&hitsPerPage=10`;
+      const url = `http://hn.algolia.com/api/v1/search?query=${encodeURIComponent(domain)}&tags=story&hitsPerPage=40`;
       const response = await fetch(url);
       const data = await response.json();
       
@@ -39,7 +39,17 @@ export class DiscoveryService {
       const candidates = await source.discover(domain);
       allCandidates.push(...candidates);
     }
-    return allCandidates;
+
+    // Deduplicate by URL and Title
+    const unique = new Map<string, TopicCandidate>();
+    for (const c of allCandidates) {
+      const key = (c.title + c.sourceUrl).toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!unique.has(key)) {
+        unique.set(key, c);
+      }
+    }
+
+    return Array.from(unique.values());
   }
 }
 

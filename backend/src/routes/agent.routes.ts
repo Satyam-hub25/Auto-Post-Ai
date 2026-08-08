@@ -101,17 +101,38 @@ router.get('/feed', async (req: Request, res: Response) => {
         rationale: true,
         sources: true,
         createdAt: true,
+        candidatesCount: true,
+        topicId: true,
       }
     });
 
+    const topicIds = posts.map(p => p.topicId).filter(id => id) as string[];
+    const topics = await prisma.topicCandidate.findMany({
+      where: { id: { in: topicIds } }
+    });
+    
+    const topicMap = new Map(topics.map(t => [t.id, t]));
+
     // Map to exact API spec: createdAt as ISO 8601 UTC string
-    const mappedPosts = posts.map(post => ({
-      id: post.id,
-      createdAt: post.createdAt.toISOString(),
-      text: post.text,
-      rationale: post.rationale,
-      sources: JSON.parse(post.sources as string),
-    }));
+    const mappedPosts = posts.map(post => {
+      let scores = null;
+      if (post.topicId && topicMap.has(post.topicId)) {
+        const topicData = topicMap.get(post.topicId);
+        if (topicData?.evaluationData) {
+          scores = topicData.evaluationData;
+        }
+      }
+
+      return {
+        id: post.id,
+        createdAt: post.createdAt.toISOString(),
+        text: post.text,
+        rationale: post.rationale,
+        sources: JSON.parse(post.sources as string),
+        candidatesCount: post.candidatesCount || 0,
+        scores,
+      };
+    });
 
     res.json({ posts: mappedPosts });
   } catch (error: any) {

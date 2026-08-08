@@ -48,15 +48,15 @@ ${recentContext || 'No previous posts yet.'}
 
 INSTRUCTIONS:
 1. Write in the persona's voice as defined in the system prompt
-2. Be insightful, opinionated, and provide actionable takeaways
-3. Reference the source material but add original analysis
-4. Include a compelling opening and strong conclusion
-5. Use markdown formatting (headers, bold, lists) for readability
+2. Avoid generic filler (e.g. "The tech landscape continues to evolve")
+3. Include: What happened, why it matters, technical implications, persona-specific perspective, evidence, and what could happen next.
+4. Use markdown formatting (headers, bold, lists) for readability.
+5. Reference the exact source URL provided.
 
 Respond ONLY with a JSON object in this exact format:
 {
   "text": "The full markdown content of the post...",
-  "rationale": "2-3 sentences explaining: why this topic was selected, why it matters now, and what makes it relevant to the persona's audience",
+  "rationale": "Write a 4-point rationale explaining: 1. Why this topic? 2. Why now? 3. Why over other candidates? 4. What makes it valuable to the audience? Make it sound like an editorial decision (e.g. 'This topic was selected because...').",
   "sources": ["${topic.sourceUrl}", "any other relevant URLs"]
 }`;
 
