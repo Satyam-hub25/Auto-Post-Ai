@@ -165,11 +165,14 @@ export class EditorialService {
     // Strong accept
     if (score >= 75) return 'ACCEPTED';
 
-    // Borderline (65-74): accept only when substance AND relevance are both strong
-    if (score >= 65) {
-      if (rubric.substance >= 70 && rubric.relevance >= 70) return 'ACCEPTED';
+    // Borderline (70-74): accept only when substance AND relevance are both very strong
+    if (score >= 70) {
+      if (rubric.substance >= 75 && rubric.relevance >= 75) return 'ACCEPTED';
       return 'CONSIDER';
     }
+
+    // 65-69: consider but do not accept
+    if (score >= 65) return 'CONSIDER';
 
     // Below 65
     return 'REJECTED';
