@@ -10,6 +10,7 @@ const configSchema = z.object({
   CRON_INTERVAL_MIN: z.coerce.number().default(60),
   CRON_INTERVAL_MAX: z.coerce.number().default(240),
   DISCOVERY_SOURCE: z.string().default('hackernews'),
+  FRONTEND_URL: z.string().default('http://localhost:5173'),
 });
 
 export const config = configSchema.parse(process.env);
