@@ -15,21 +15,7 @@ app.set('trust proxy', 1);
 // Security and middleware
 app.use(helmet());
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    // Remove protocol from config if user accidentally included/excluded it
-    const configuredHost = config.FRONTEND_URL ? config.FRONTEND_URL.replace(/^https?:\/\//, '') : '';
-    
-    if (
-      (configuredHost && origin.includes(configuredHost)) || 
-      origin.includes('localhost') || 
-      origin.endsWith('.vercel.app')
-    ) {
-      callback(null, true);
-    } else {
-      callback(null, false); // Fail silently instead of crashing
-    }
-  },
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));

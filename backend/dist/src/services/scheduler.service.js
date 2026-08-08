@@ -1,0 +1,131 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.schedulerService = exports.SchedulerService = void 0;
+const node_cron_1 = __importDefault(require("node-cron"));
+const discovery_service_1 = require("./discovery.service");
+const editorial_service_1 = require("./editorial.service");
+const writer_service_1 = require("./writer.service");
+const memory_service_1 = require("./memory.service");
+const client_1 = __importDefault(require("../db/client"));
+const config_1 = require("../config");
+class SchedulerService {
+    activeJobs = new Map();
+    async startAgentSchedule(agentId) {
+        // Stop existing job if any
+        if (this.activeJobs.has(agentId)) {
+            this.stopAgentSchedule(agentId);
+        }
+        // Randomized interval between CRON_INTERVAL_MIN and CRON_INTERVAL_MAX
+        const interval = Math.floor(Math.random() * (config_1.config.CRON_INTERVAL_MAX - config_1.config.CRON_INTERVAL_MIN + 1) + config_1.config.CRON_INTERVAL_MIN);
+        // node-cron expression for every N minutes
+        const cronExpression = `*/${interval} * * * *`;
+        console.log(`[Scheduler] Agent ${agentId}: Registering cron every ${interval} minutes (${cronExpression})`);
+        const job = node_cron_1.default.schedule(cronExpression, async () => {
+            console.log(`[Scheduler] Agent ${agentId}: Cron triggered at ${new Date().toISOString()}`);
+            await this.runCycleNow(agentId);
+        });
+        this.activeJobs.set(agentId, job);
+        // Kick off one immediate cycle (async, non-blocking) so the feed isn't empty
+        console.log(`[Scheduler] Agent ${agentId}: Kicking off immediate first cycle`);
+        setTimeout(() => {
+            this.runCycleNow(agentId).catch(err => {
+                console.error(`[Scheduler] Agent ${agentId}: First cycle error:`, err);
+            });
+        }, 2000);
+    }
+    stopAgentSchedule(agentId) {
+        const job = this.activeJobs.get(agentId);
+        if (job) {
+            job.stop();
+            this.activeJobs.delete(agentId);
+            console.log(`[Scheduler] Agent ${agentId}: Cron job stopped`);
+        }
+    }
+    async runCycleNow(agentId) {
+        const startTime = Date.now();
+        console.log(`\n${'═'.repeat(60)}`);
+        console.log(`  AUTONOMOUS CYCLE — Agent ${agentId}`);
+        console.log(`  Started: ${new Date().toISOString()}`);
+        console.log(`${'═'.repeat(60)}`);
+        try {
+            // Verify agent exists
+            const agent = await client_1.default.agent.findUnique({ where: { id: agentId } });
+            if (!agent) {
+                console.error(`[Cycle] Agent not found: ${agentId}`);
+                return;
+            }
+            // ── Step 1: DISCOVER ──
+            console.log(`\n[Cycle] Step 1/5: DISCOVERING topics for domain "${agent.domain}"...`);
+            const candidates = await discovery_service_1.discoveryService.discoverTopics(agent.domain);
+            console.log(`[Cycle]   → Found ${candidates.length} raw candidates`);
+            if (candidates.length === 0) {
+                console.log(`[Cycle]   → No candidates found. Cycle complete (empty).`);
+                return;
+            }
+            // ── Step 2: STAGE 1 (LOCAL PRE-FILTERING) ──
+            console.log(`\n[Cycle] Step 2/5: LOCAL PRE-FILTERING (Removing obvious noise)...`);
+            const filteredCandidates = candidates.filter(c => {
+                const text = (c.title + ' ' + (c.summary || '')).toLowerCase();
+                if (text.startsWith('ask hn:') && !text.includes('release'))
+                    return false; // filter out general questions
+                if (text.includes('watch "learn freelance'))
+                    return false; // filter specific noise from prompt
+                if (text.length < 20)
+                    return false; // filter extreme short content
+                return true;
+            });
+            console.log(`[Cycle]   → Stage 1 complete. ${filteredCandidates.length}/${candidates.length} passed local filter.`);
+            if (filteredCandidates.length === 0) {
+                console.log(`[Cycle]   → No candidates passed local filtering. Cycle complete.`);
+                return;
+            }
+            // ── Step 3: STAGE 2 (LLM BATCH EVALUATION & MEMORY CHECK) ──
+            console.log(`\n[Cycle] Step 3/5: BATCH EDITORIAL JUDGMENT (evaluating top 5 candidates)...`);
+            const systemPrompt = agent.voiceGuide || '';
+            const recentPosts = await memory_service_1.memoryService.getRecentContext(agentId, 10);
+            const evaluated = await editorial_service_1.editorialService.evaluateCandidates(agentId, filteredCandidates.slice(0, 5), // Only batch send the top 5 filtered candidates
+            systemPrompt, recentPosts);
+            const accepted = evaluated.filter(e => e.status === 'ACCEPTED' || e.status === 'CONSIDER').sort((a, b) => b.score - a.score);
+            const rejected = evaluated.filter(e => e.status === 'REJECTED');
+            console.log(`[Cycle]   → Accepted/Considered: ${accepted.length}, Rejected: ${rejected.length}`);
+            if (accepted.length === 0) {
+                console.log(`[Cycle]   → No suitable topic found. Waiting for next cycle.`);
+                return;
+            }
+            const topTopic = accepted[0];
+            console.log(`[Cycle]   → Top topic selected: "${topTopic.title}" (score: ${topTopic.score}, status: ${topTopic.status})`);
+            // ── Step 4: WRITE POST ──
+            console.log(`\n[Cycle] Step 4/5: WRITING post in persona voice...`);
+            const postContent = await writer_service_1.writerService.writePost({ title: topTopic.title, summary: topTopic.summary, sourceUrl: topTopic.sourceUrl }, systemPrompt, recentPosts);
+            console.log(`[Cycle]   → Generated ${postContent.text.length} chars, ${postContent.sources.length} sources`);
+            // ── Step 5: PUBLISH ──
+            console.log(`\n[Cycle] Step 5/5: PUBLISHING post...`);
+            const post = await client_1.default.post.create({
+                data: {
+                    agentId,
+                    text: postContent.text,
+                    rationale: postContent.rationale,
+                    sources: JSON.stringify(postContent.sources),
+                    keywords: JSON.stringify([]),
+                }
+            });
+            // Update memory with keywords
+            await memory_service_1.memoryService.addToMemory(post.id, `${topTopic.title} ${post.text}`);
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            console.log(`\n[Cycle] ✅ CYCLE COMPLETE in ${elapsed}s`);
+            console.log(`[Cycle]   Post ID: ${post.id}`);
+            console.log(`[Cycle]   Topic: "${topTopic.title}"`);
+            console.log(`${'═'.repeat(60)}\n`);
+        }
+        catch (error) {
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            console.error(`\n[Cycle] ❌ CYCLE FAILED after ${elapsed}s:`, error);
+            console.log(`${'═'.repeat(60)}\n`);
+        }
+    }
+}
+exports.SchedulerService = SchedulerService;
+exports.schedulerService = new SchedulerService();
