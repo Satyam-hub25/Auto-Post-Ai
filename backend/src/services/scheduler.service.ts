@@ -76,38 +76,22 @@ export class SchedulerService {
         return;
       }
 
-      // ── Step 2: MEMORY CHECK — filter already-covered topics ──
-      console.log(`\n[Cycle] Step 2/5: CHECKING MEMORY for duplicates...`);
-      const novelCandidates = [];
-      for (const c of candidates) {
-        const tooSimilar = await memoryService.isTooSimilar(c.title, c.summary || '', agentId);
-        if (!tooSimilar) {
-          novelCandidates.push(c);
-        } else {
-          console.log(`[Cycle]   → Skipped (too similar): "${c.title}"`);
-        }
-      }
-      console.log(`[Cycle]   → ${novelCandidates.length}/${candidates.length} passed similarity check`);
-
-      if (novelCandidates.length === 0) {
-        console.log(`[Cycle]   → All candidates too similar to recent posts. Cycle complete.`);
-        return;
-      }
-
-      // ── Step 3: EDITORIAL JUDGMENT ──
-      console.log(`\n[Cycle] Step 3/5: EDITORIAL JUDGMENT (evaluating ${Math.min(novelCandidates.length, 5)} candidates)...`);
+      // ── Step 2: EDITORIAL JUDGMENT & MEMORY CHECK ──
+      // The LLM will now evaluate the top 5 candidates and perform the memory check directly
+      console.log(`\n[Cycle] Step 2/4: EDITORIAL JUDGMENT (evaluating ${Math.min(candidates.length, 5)} candidates)...`);
       const systemPrompt = agent.voiceGuide || '';
       const recentPosts = await memoryService.getRecentContext(agentId, 10);
+      
       const evaluated = await editorialService.evaluateCandidates(
         agentId,
-        novelCandidates.slice(0, 5),
+        candidates.slice(0, 5),
         systemPrompt,
         recentPosts
       );
 
-      const accepted = evaluated.filter(e => e.status === 'ACCEPTED').sort((a, b) => b.score - a.score);
+      const accepted = evaluated.filter(e => e.status === 'ACCEPTED' || e.status === 'CONSIDER').sort((a, b) => b.score - a.score);
       const rejected = evaluated.filter(e => e.status === 'REJECTED');
-      console.log(`[Cycle]   → Accepted: ${accepted.length}, Rejected: ${rejected.length}`);
+      console.log(`[Cycle]   → Accepted/Considered: ${accepted.length}, Rejected: ${rejected.length}`);
 
       if (accepted.length === 0) {
         console.log(`[Cycle]   → No candidates accepted this cycle.`);
@@ -115,10 +99,10 @@ export class SchedulerService {
       }
 
       const topTopic = accepted[0];
-      console.log(`[Cycle]   → Top topic: "${topTopic.title}" (score: ${topTopic.score})`);
+      console.log(`[Cycle]   → Top topic: "${topTopic.title}" (score: ${topTopic.score}, status: ${topTopic.status})`);
 
-      // ── Step 4: WRITE POST ──
-      console.log(`\n[Cycle] Step 4/5: WRITING post in persona voice...`);
+      // ── Step 3: WRITE POST ──
+      console.log(`\n[Cycle] Step 3/4: WRITING post in persona voice...`);
       const postContent = await writerService.writePost(
         { title: topTopic.title, summary: topTopic.summary, sourceUrl: topTopic.sourceUrl },
         systemPrompt,
@@ -126,8 +110,8 @@ export class SchedulerService {
       );
       console.log(`[Cycle]   → Generated ${postContent.text.length} chars, ${postContent.sources.length} sources`);
 
-      // ── Step 5: PUBLISH ──
-      console.log(`\n[Cycle] Step 5/5: PUBLISHING post...`);
+      // ── Step 4: PUBLISH ──
+      console.log(`\n[Cycle] Step 4/4: PUBLISHING post...`);
       const post = await prisma.post.create({
         data: {
           agentId,

@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Agent {
@@ -38,9 +39,11 @@ model TopicCandidate {
   summary      String   @default("")
   sourceUrl    String
   score        Float    @default(0)
-  status       String   @default("PENDING")
-  reason       String   @default("")
-  discoveredAt DateTime @default(now())
+  status           String   @default("PENDING")
+  reason           String   @default("")
+  evaluationData   Json?
+  evaluationMethod String   @default("llm")
+  discoveredAt     DateTime @default(now())
 }
 
 model AdminUser {

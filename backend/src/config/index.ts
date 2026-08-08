@@ -11,6 +11,8 @@ const configSchema = z.object({
   CRON_INTERVAL_MAX: z.coerce.number().default(240),
   DISCOVERY_SOURCE: z.string().default('hackernews'),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
+  MIN_ACCEPT_SCORE: z.coerce.number().default(80),
+  MIN_CONSIDER_SCORE: z.coerce.number().default(65),
 });
 
 export const config = configSchema.parse(process.env);

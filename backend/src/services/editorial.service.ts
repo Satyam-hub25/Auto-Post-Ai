@@ -8,9 +8,14 @@ const mistral = config.MISTRAL_API_KEY
   : null;
 
 const RubricResultSchema = z.object({
-  score: z.number().min(1).max(10),
-  status: z.enum(['ACCEPTED', 'REJECTED']),
+  relevance: z.number().min(0).max(100),
+  novelty: z.number().min(0).max(100),
+  personaFit: z.number().min(0).max(100),
+  currentRelevance: z.number().min(0).max(100),
+  sourceQuality: z.number().min(0).max(100),
+  contentValue: z.number().min(0).max(100),
   reasoning: z.string(),
+  decision: z.enum(['ACCEPT', 'CONSIDER', 'REJECT']).optional(),
 });
 
 type RubricResult = z.infer<typeof RubricResultSchema>;
@@ -19,6 +24,14 @@ interface CandidateInput {
   title: string;
   summary?: string;
   sourceUrl: string;
+}
+
+interface EvaluationOutput {
+  score: number;
+  status: 'ACCEPTED' | 'CONSIDER' | 'REJECTED';
+  reasoning: string;
+  evaluationData: any;
+  evaluationMethod: string;
 }
 
 export class EditorialService {
@@ -32,36 +45,20 @@ export class EditorialService {
 
     // 1. Evaluate all candidates
     for (const candidate of candidates) {
+      console.log(`[EVALUATION] Evaluating topic: "${candidate.title}"`);
       const evaluation = await this.evaluateSingle(candidate, personaVoice, recentPosts);
+      console.log(`[EVALUATION] Score: ${evaluation.score}`);
+      console.log(`[EVALUATION] Decision: ${evaluation.status}`);
       evaluated.push({ candidate, evaluation });
     }
 
-    // 2. Sort by score descending (best first)
+    // 2. Sort by score descending
     evaluated.sort((a, b) => b.evaluation.score - a.evaluation.score);
 
     const results = [];
-    let acceptCount = 0;
-
-    // 3. Apply batch rules: at least 1, at most 3
-    for (let i = 0; i < evaluated.length; i++) {
-      const item = evaluated[i];
-      let finalStatus: 'ACCEPTED' | 'REJECTED' = 'REJECTED';
-      let finalReason = item.evaluation.reasoning;
-
-      if (acceptCount < 3) {
-        // If it was accepted by AI, or if we haven't accepted anything yet (force accept the best one)
-        if (item.evaluation.status === 'ACCEPTED' || acceptCount === 0) {
-          finalStatus = 'ACCEPTED';
-          if (item.evaluation.status !== 'ACCEPTED') {
-             finalReason = `Forced acceptance (best available candidate). AI Reasoning: ${finalReason}`;
-          }
-          acceptCount++;
-        }
-      } else if (item.evaluation.status === 'ACCEPTED') {
-        finalReason = `Rejected due to batch limits (max 3). AI Reasoning: ${finalReason}`;
-      }
-
-      // 4. Save to DB
+    
+    // 3. Save to DB
+    for (const item of evaluated) {
       const savedCandidate = await prisma.topicCandidate.create({
         data: {
           agentId,
@@ -69,62 +66,81 @@ export class EditorialService {
           summary: item.candidate.summary || '',
           sourceUrl: item.candidate.sourceUrl,
           score: item.evaluation.score,
-          status: finalStatus,
-          reason: finalReason,
+          status: item.evaluation.status,
+          reason: item.evaluation.reasoning,
+          // Store raw evaluation JSON in evaluationData
+          evaluationData: item.evaluation.evaluationData,
+          evaluationMethod: item.evaluation.evaluationMethod,
         },
       });
-
       results.push(savedCandidate);
-      console.log(`[Editorial] "${item.candidate.title}" → ${finalStatus} (score: ${item.evaluation.score})`);
     }
 
     return results;
   }
 
+  private calculateWeightedScore(rubric: RubricResult): number {
+    return Math.round(
+      rubric.relevance * 0.25 +
+      rubric.novelty * 0.20 +
+      rubric.personaFit * 0.20 +
+      rubric.currentRelevance * 0.15 +
+      rubric.sourceQuality * 0.10 +
+      rubric.contentValue * 0.10
+    );
+  }
+
+  private determineStatus(score: number): 'ACCEPTED' | 'CONSIDER' | 'REJECTED' {
+    if (score >= config.MIN_ACCEPT_SCORE) return 'ACCEPTED';
+    if (score >= config.MIN_CONSIDER_SCORE) return 'CONSIDER';
+    return 'REJECTED';
+  }
+
   private async evaluateSingle(
     candidate: CandidateInput,
     personaVoice: string,
-    recentPosts: any[]
-  ): Promise<RubricResult> {
+    recentPosts: any[],
+    retryCount = 0
+  ): Promise<EvaluationOutput> {
     if (!mistral) {
-      // Mock evaluation when API key is missing
-      const score = Math.floor(Math.random() * 5) + 5; // 5-9
-      const status = score >= 7 ? 'ACCEPTED' as const : 'REJECTED' as const;
-      return {
-        score,
-        status,
-        reasoning: `Mock evaluation: Score ${score}/10. ${status === 'ACCEPTED' ? 'Topic is relevant and timely for the persona domain.' : 'Topic does not meet the relevance threshold for this persona.'}`,
-      };
+      return this.fallbackEvaluate(candidate, personaVoice, 'No Mistral API key configured.');
     }
 
     try {
-      const recentTitles = recentPosts.map((p: any) => p.text?.substring(0, 100) || '').join('; ');
-
-      const prompt = `You are an editorial assistant. Evaluate this topic candidate based on the persona voice below.
-
+      const recentContext = recentPosts.map((p: any) => p.text?.substring(0, 100) || '').join('; ');
+      
+      const prompt = `You are an editorial assistant. Evaluate this topic candidate based on the persona voice.
+      
 PERSONA VOICE:
 ${personaVoice}
 
-RECENT POSTS (to avoid repetition):
-${recentTitles || 'None yet'}
+RECENT POSTS (MEMORY):
+${recentContext || 'None yet'}
+If the candidate is highly similar to an existing post, reduce the "novelty" score significantly.
 
 CANDIDATE:
 Title: ${candidate.title}
 Summary: ${candidate.summary || 'No summary available'}
 URL: ${candidate.sourceUrl}
 
-RUBRIC — Score 1-10 on each dimension, then compute the average:
-1. Relevance (Is it strictly related to the domain?)
-2. Novelty (Is it fresh or interesting?)
-3. Value (Would followers find it insightful?)
-
-Accept if average score >= 7, else Reject.
+Evaluate these 6 criteria from 0-100:
+1. relevance: AI/Tech relevance to the domain.
+2. novelty: Meaningfully different from RECENT POSTS.
+3. personaFit: Matches the configured persona voice.
+4. currentRelevance: Worth discussing right now.
+5. sourceQuality: Credibility of the source.
+6. contentValue: Can generate meaningful analysis.
 
 Respond ONLY with a JSON object in this exact format:
 {
-  "score": <average_score_as_integer>,
-  "status": "ACCEPTED" or "REJECTED",
-  "reasoning": "<2-3 sentences explaining why>"
+  "relevance": 0,
+  "novelty": 0,
+  "personaFit": 0,
+  "currentRelevance": 0,
+  "sourceQuality": 0,
+  "contentValue": 0,
+  "reasoning": "<2-3 sentences explaining why, particularly mentioning memory similarity if applicable>",
+  "decision": "ACCEPT"
 }`;
 
       const response = await mistral.chat.complete({
@@ -132,29 +148,73 @@ Respond ONLY with a JSON object in this exact format:
         messages: [{ role: 'user', content: prompt }],
         responseFormat: { type: 'json_object' }
       });
+      console.log(`[EVALUATION] Model response received`);
 
       const messageContent = response.choices?.[0]?.message?.content;
       if (typeof messageContent !== 'string') {
         throw new Error('No text response from Mistral');
       }
 
-      // Extract JSON from response (handle markdown code blocks)
       let jsonStr = messageContent.trim();
       const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      }
+      if (jsonMatch) jsonStr = jsonMatch[0];
 
       const parsed = JSON.parse(jsonStr);
-      return RubricResultSchema.parse(parsed);
-    } catch (error) {
-      console.error('[Editorial] Error evaluating candidate:', error);
+      const rubric = RubricResultSchema.parse(parsed);
+      
+      const finalScore = this.calculateWeightedScore(rubric);
+      const finalStatus = this.determineStatus(finalScore);
+
       return {
-        score: 5,
-        status: 'REJECTED' as const,
-        reasoning: 'Error during AI evaluation — defaulting to reject for safety.',
+        score: finalScore,
+        status: finalStatus,
+        reasoning: rubric.reasoning,
+        evaluationData: rubric,
+        evaluationMethod: 'llm'
       };
+
+    } catch (error: any) {
+      console.error(`[EVALUATION ERROR]\nProvider: Mistral\nStatus: ${error?.status || 'Unknown'}\nMessage: ${error?.message || error}`);
+      
+      if (retryCount < 1) {
+        console.log(`[EVALUATION] Retrying evaluation (Attempt ${retryCount + 2})...`);
+        return this.evaluateSingle(candidate, personaVoice, recentPosts, retryCount + 1);
+      }
+      
+      return this.fallbackEvaluate(candidate, personaVoice, `LLM Error: ${error.message}`);
     }
+  }
+
+  private fallbackEvaluate(candidate: CandidateInput, personaVoice: string, errorContext: string): EvaluationOutput {
+    // Deterministic fallback based on heuristics
+    let score = 50;
+    
+    // Keyword matching heuristic
+    const keywords = personaVoice.toLowerCase().split(/\s+/).filter(w => w.length > 4);
+    const candidateText = (candidate.title + ' ' + (candidate.summary || '')).toLowerCase();
+    const matchCount = keywords.filter(kw => candidateText.includes(kw)).length;
+    score += Math.min(matchCount * 5, 20); // up to +20
+
+    // Source quality heuristic
+    if (candidate.sourceUrl.includes('github.com') || candidate.sourceUrl.includes('arxiv')) {
+      score += 15;
+    }
+
+    // Length heuristic
+    if (candidateText.length > 100) score += 10;
+
+    const finalScore = Math.min(score, 100);
+    const finalStatus = this.determineStatus(finalScore);
+
+    return {
+      score: finalScore,
+      status: finalStatus,
+      reasoning: `Fallback heuristic evaluation. Keywords matched: ${matchCount}. Previous Error: ${errorContext}`,
+      evaluationData: {
+        relevance: finalScore, novelty: 50, personaFit: 50, currentRelevance: 50, sourceQuality: 50, contentValue: 50
+      },
+      evaluationMethod: 'fallback'
+    };
   }
 }
 
