@@ -76,15 +76,30 @@ export class SchedulerService {
         return;
       }
 
-      // ── Step 2: EDITORIAL JUDGMENT & MEMORY CHECK ──
-      // The LLM will now evaluate the top 5 candidates and perform the memory check directly
-      console.log(`\n[Cycle] Step 2/4: EDITORIAL JUDGMENT (evaluating ${Math.min(candidates.length, 5)} candidates)...`);
+      // ── Step 2: STAGE 1 (LOCAL PRE-FILTERING) ──
+      console.log(`\n[Cycle] Step 2/5: LOCAL PRE-FILTERING (Removing obvious noise)...`);
+      const filteredCandidates = candidates.filter(c => {
+        const text = (c.title + ' ' + (c.summary || '')).toLowerCase();
+        if (text.startsWith('ask hn:') && !text.includes('release')) return false; // filter out general questions
+        if (text.includes('watch "learn freelance')) return false; // filter specific noise from prompt
+        if (text.length < 20) return false; // filter extreme short content
+        return true;
+      });
+      console.log(`[Cycle]   → Stage 1 complete. ${filteredCandidates.length}/${candidates.length} passed local filter.`);
+
+      if (filteredCandidates.length === 0) {
+        console.log(`[Cycle]   → No candidates passed local filtering. Cycle complete.`);
+        return;
+      }
+
+      // ── Step 3: STAGE 2 (LLM BATCH EVALUATION & MEMORY CHECK) ──
+      console.log(`\n[Cycle] Step 3/5: BATCH EDITORIAL JUDGMENT (evaluating top 5 candidates)...`);
       const systemPrompt = agent.voiceGuide || '';
       const recentPosts = await memoryService.getRecentContext(agentId, 10);
       
       const evaluated = await editorialService.evaluateCandidates(
         agentId,
-        candidates.slice(0, 5),
+        filteredCandidates.slice(0, 5), // Only batch send the top 5 filtered candidates
         systemPrompt,
         recentPosts
       );
@@ -94,15 +109,15 @@ export class SchedulerService {
       console.log(`[Cycle]   → Accepted/Considered: ${accepted.length}, Rejected: ${rejected.length}`);
 
       if (accepted.length === 0) {
-        console.log(`[Cycle]   → No candidates accepted this cycle.`);
+        console.log(`[Cycle]   → No suitable topic found. Waiting for next cycle.`);
         return;
       }
 
       const topTopic = accepted[0];
-      console.log(`[Cycle]   → Top topic: "${topTopic.title}" (score: ${topTopic.score}, status: ${topTopic.status})`);
+      console.log(`[Cycle]   → Top topic selected: "${topTopic.title}" (score: ${topTopic.score}, status: ${topTopic.status})`);
 
-      // ── Step 3: WRITE POST ──
-      console.log(`\n[Cycle] Step 3/4: WRITING post in persona voice...`);
+      // ── Step 4: WRITE POST ──
+      console.log(`\n[Cycle] Step 4/5: WRITING post in persona voice...`);
       const postContent = await writerService.writePost(
         { title: topTopic.title, summary: topTopic.summary, sourceUrl: topTopic.sourceUrl },
         systemPrompt,
@@ -110,8 +125,8 @@ export class SchedulerService {
       );
       console.log(`[Cycle]   → Generated ${postContent.text.length} chars, ${postContent.sources.length} sources`);
 
-      // ── Step 4: PUBLISH ──
-      console.log(`\n[Cycle] Step 4/4: PUBLISHING post...`);
+      // ── Step 5: PUBLISH ──
+      console.log(`\n[Cycle] Step 5/5: PUBLISHING post...`);
       const post = await prisma.post.create({
         data: {
           agentId,
