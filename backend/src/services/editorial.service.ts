@@ -89,15 +89,31 @@ export class EditorialService {
     }
     console.log(`[DEDUP] ${candidates.length} candidates → ${dedupedCandidates.length} unique`);
 
-    // 1. Check cache first
+    // 1. Check cache and Database first to prevent cross-cycle duplicates
     for (const candidate of dedupedCandidates) {
       const hash = this.getTopicHash(candidate);
+      
+      // First check memory cache
       if (evaluationCache.has(hash)) {
         console.log(`[EVALUATION] Using cached result for: "${candidate.title}"`);
         evaluated.push({ candidate, evaluation: evaluationCache.get(hash)! });
-      } else {
-        toEvaluateBatch.push(candidate);
+        continue;
       }
+
+      // Then check Database to see if this agent already evaluated this URL
+      const existingDbRecord = await prisma.topicCandidate.findFirst({
+        where: {
+          agentId,
+          sourceUrl: candidate.sourceUrl
+        }
+      });
+
+      if (existingDbRecord) {
+        console.log(`[DEDUP] Skipping already evaluated topic from DB: "${candidate.title}"`);
+        continue; // Drop completely to avoid re-publishing
+      }
+
+      toEvaluateBatch.push(candidate);
     }
 
     // 2. Batch Evaluate remaining via LLM (in chunks of 10)

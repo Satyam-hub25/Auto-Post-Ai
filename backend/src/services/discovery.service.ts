@@ -11,7 +11,15 @@ export interface DiscoverySource {
 export class HackerNewsDiscovery implements DiscoverySource {
   async discover(domain: string): Promise<TopicCandidate[]> {
     try {
-      const url = `http://hn.algolia.com/api/v1/search?query=${encodeURIComponent(domain)}&tags=story&hitsPerPage=40`;
+      // Expand query for specific niche domains to ensure enough hits
+      let queryStr = domain.toLowerCase();
+      if (queryStr.includes('cybersecurity') || queryStr.includes('security')) {
+        queryStr = '(cybersecurity OR security OR vulnerability OR hack OR breach OR infosec)';
+      } else if (queryStr.includes('data science') || queryStr.includes('analytics')) {
+        queryStr = '(data science OR machine learning OR analytics OR big data)';
+      }
+      
+      const url = `http://hn.algolia.com/api/v1/search?query=${encodeURIComponent(queryStr)}&tags=story&hitsPerPage=40`;
       const response = await fetch(url);
       const data = await response.json();
       
