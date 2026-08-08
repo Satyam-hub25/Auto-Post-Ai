@@ -100,13 +100,13 @@ export class SchedulerService {
       }
 
       // ── Step 3: STAGE 2 (LLM BATCH EVALUATION & MEMORY CHECK) ──
-      console.log(`\n[Cycle] Step 3/5: BATCH EDITORIAL JUDGMENT (evaluating top 5-8 candidates)...`);
+      console.log(`\n[Cycle] Step 3/5: BATCH EDITORIAL JUDGMENT (evaluating ${filteredCandidates.length} candidates)...`);
       const systemPrompt = agent.voiceGuide || '';
       const recentPosts = await memoryService.getRecentContext(agentId, 10);
       
       const evaluated = await editorialService.evaluateCandidates(
         agentId,
-        filteredCandidates.slice(0, 8), // Evaluate up to 8 candidates
+        filteredCandidates, // Evaluate ALL filtered candidates
         systemPrompt,
         recentPosts
       );

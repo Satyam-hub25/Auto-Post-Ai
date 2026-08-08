@@ -100,14 +100,21 @@ export class EditorialService {
       }
     }
 
-    // 2. Batch Evaluate remaining via LLM
+    // 2. Batch Evaluate remaining via LLM (in chunks of 10)
     if (toEvaluateBatch.length > 0) {
-      console.log(`[EVALUATION] Batch evaluating ${toEvaluateBatch.length} topics...`);
-      const batchResults = await this.evaluateBatchWithRetry(toEvaluateBatch, personaVoice, recentPosts);
+      const CHUNK_SIZE = 10;
+      const allResults = new Map<string, EvaluationOutput>();
+      
+      for (let i = 0; i < toEvaluateBatch.length; i += CHUNK_SIZE) {
+        const chunk = toEvaluateBatch.slice(i, i + CHUNK_SIZE);
+        console.log(`[EVALUATION] Batch evaluating chunk ${Math.floor(i/CHUNK_SIZE) + 1} (${chunk.length} topics)...`);
+        const chunkResults = await this.evaluateBatchWithRetry(chunk, personaVoice, recentPosts);
+        chunkResults.forEach((v, k) => allResults.set(k, v));
+      }
       
       for (const candidate of toEvaluateBatch) {
         const hash = this.getTopicHash(candidate);
-        const result = batchResults.get(candidate.title) || this.fallbackEvaluate(candidate, personaVoice, 'Missing from LLM batch output');
+        const result = allResults.get(candidate.title) || this.fallbackEvaluate(candidate, personaVoice, 'Missing from LLM batch output');
         
         evaluationCache.set(hash, result);
         evaluated.push({ candidate, evaluation: result });
@@ -156,18 +163,15 @@ export class EditorialService {
 
   private determineStatus(score: number, rubric: Omit<RubricResult, 'topicId' | 'score' | 'decision' | 'reasoning'>): 'ACCEPTED' | 'CONSIDER' | 'REJECTED' {
     // Strong accept
-    if (score >= 80) return 'ACCEPTED';
+    if (score >= 75) return 'ACCEPTED';
 
-    // Accept if technically meaningful (70-79)
-    if (score >= 70) return 'ACCEPTED';
-
-    // Borderline (60-69): accept when substance + relevance are both strong
-    if (score >= 60) {
-      if (rubric.substance >= 65 && rubric.relevance >= 65) return 'ACCEPTED';
+    // Borderline (65-74): accept only when substance AND relevance are both strong
+    if (score >= 65) {
+      if (rubric.substance >= 70 && rubric.relevance >= 70) return 'ACCEPTED';
       return 'CONSIDER';
     }
 
-    // Below 60
+    // Below 65
     return 'REJECTED';
   }
 
@@ -197,7 +201,7 @@ URL: ${c.sourceUrl}
 Summary: ${c.summary?.substring(0, 200) || 'None'}
 `).join('\n');
 
-      const prompt = `You are a technology editor evaluating topic candidates for publication. Use correct editorial judgment — accept strong technology topics, reject spam and low-substance content.
+      const prompt = `You are a selective technology editor evaluating topic candidates for publication. You apply rigorous editorial standards — approximately 30% of candidates should be accepted and 70% rejected based on genuine quality assessment.
 
 A topic is RELEVANT if it meaningfully discusses: AI, machine learning, software engineering, web development, programming, developer tools, cloud computing, cybersecurity, databases, open source, computer science, robotics, automation, the technology industry, technical careers, developer education, technology trends, computing infrastructure, or technical research.
 
@@ -206,44 +210,44 @@ ${personaVoice}
 
 RECENT POSTS (MEMORY):
 ${recentContext || 'None yet'}
-If a candidate is highly similar to an existing post, reduce the "novelty" score.
+If a candidate is highly similar to an existing post, significantly reduce the "novelty" score.
 
 CANDIDATES:
 ${candidateListStr}
 
-For EACH candidate, evaluate these 5 criteria from 0-100:
-1. novelty: Does this provide something meaningfully new? Reduce if similar to RECENT POSTS.
-2. substance: Is there enough technical or analytical substance to create a valuable post?
-3. credibility: Is the source trustworthy? (GitHub, HN discussions, engineering blogs, official docs = good. Spam, affiliate = bad.)
-4. relevance: Does this topic relate to technology, engineering, or the configured persona's domain?
-5. timeliness: Is this topic currently relevant or timely?
+For EACH candidate, evaluate these 5 criteria from 0-100. Use the FULL scoring range — most topics should score between 40 and 75. Reserve scores above 75 for genuinely strong candidates:
+1. novelty: Does this provide something meaningfully new? Be strict — generic or frequently-discussed topics should score 40-55.
+2. substance: Is there enough technical depth or analytical substance to write a valuable, original post? Vague titles, listicles, and shallow overviews should score 30-50.
+3. credibility: Is the source trustworthy? (GitHub, HN discussions, engineering blogs, official docs = 70-90. Unknown blogs, aggregators = 40-55. Spam/affiliate = 10-25.)
+4. relevance: Does this topic relate to technology, engineering, or the configured persona's domain? Tangentially related = 40-55. Directly relevant = 70-90.
+5. timeliness: Is this topic currently relevant? Evergreen = 50-60. Timely/breaking = 70-90. Dated = 20-40.
 
 Calculate a final 'score' by weighting: Novelty(20%) + Substance(25%) + Credibility(20%) + Relevance(20%) + Timeliness(15%).
 
 Decision guide:
-- 80-100: strong ACCEPT
-- 70-79: ACCEPT if technically meaningful
-- 60-69: ACCEPT if substance + relevance are strong, otherwise CONSIDER
-- Below 60: REJECT
+- 75-100: ACCEPT — strong candidate worth publishing
+- 65-74: CONSIDER — borderline, only accept if substance and relevance are both strong
+- 50-64: REJECT — insufficient quality for publication
+- Below 50: REJECT — clearly weak, off-topic, or promotional
 
-Only REJECT if the content is clearly: advertising, ticket sales, conference promotion, job ads, affiliate marketing, spam, completely unrelated to technology, or extremely shallow.
+Always REJECT: advertisements, ticket sales, discount promotions, conference marketing, job ads, affiliate content, spam, completely unrelated topics, obvious duplicates, extremely shallow content.
 
-Do NOT reject a topic simply because it is a discussion question, a personal blog, or from a non-academic source. Evaluate the actual content.
+Do NOT reject a topic simply because it is a discussion, a personal blog, or from a non-academic source. Evaluate the actual content quality.
 
-Provide 2-3 sentences of 'reasoning' explaining exactly WHY it was rejected or accepted. Be specific about the editorial decision.
+Provide 2-3 sentences of 'reasoning' explaining the specific editorial reason for rejection or acceptance.
 
 Respond ONLY with a JSON object in this exact format:
 {
   "evaluations": [
     {
       "topicId": "0",
-      "novelty": 72,
-      "substance": 85,
-      "credibility": 90,
-      "relevance": 81,
-      "timeliness": 84,
-      "score": 83,
-      "decision": "ACCEPT",
+      "novelty": 55,
+      "substance": 72,
+      "credibility": 68,
+      "relevance": 80,
+      "timeliness": 65,
+      "score": 69,
+      "decision": "CONSIDER",
       "reasoning": "..."
     }
   ]
