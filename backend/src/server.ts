@@ -63,30 +63,32 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 // Start server
-const PORT = config.PORT;
-app.listen(PORT, async () => {
-  console.log(`\n🚀 Autonomous AI Creator Backend running on port ${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/api/health`);
-  console.log(`   Mistral API: ${config.MISTRAL_API_KEY ? '✅ Configured' : '⚠️  Not configured (mock mode)'}`);
-  console.log(`   Discovery: ${config.DISCOVERY_SOURCE}`);
-  console.log(`   Schedule: ${config.CRON_INTERVAL_MIN}-${config.CRON_INTERVAL_MAX} min intervals\n`);
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  const PORT = config.PORT;
+  app.listen(PORT, async () => {
+    console.log(`\n🚀 Autonomous AI Creator Backend running on port ${PORT}`);
+    console.log(`   Health: http://localhost:${PORT}/api/health`);
+    console.log(`   Mistral API: ${config.MISTRAL_API_KEY ? '✅ Configured' : '⚠️  Not configured (mock mode)'}`);
+    console.log(`   Discovery: ${config.DISCOVERY_SOURCE}`);
+    console.log(`   Schedule: ${config.CRON_INTERVAL_MIN}-${config.CRON_INTERVAL_MAX} min intervals\n`);
 
-  // Restore cron jobs for all existing agents
-  try {
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
-    const { schedulerService } = await import('./services/scheduler.service');
-    
-    const agents = await prisma.agent.findMany();
-    console.log(`[Boot] Found ${agents.length} existing agents. Restoring schedules...`);
-    for (const agent of agents) {
-      schedulerService.startAgentSchedule(agent.id).catch(err => {
-        console.error(`[Boot] Failed to start schedule for agent ${agent.id}:`, err);
-      });
+    // Restore cron jobs for all existing agents
+    try {
+      const { PrismaClient } = await import('@prisma/client');
+      const prisma = new PrismaClient();
+      const { schedulerService } = await import('./services/scheduler.service');
+      
+      const agents = await prisma.agent.findMany();
+      console.log(`[Boot] Found ${agents.length} existing agents. Restoring schedules...`);
+      for (const agent of agents) {
+        schedulerService.startAgentSchedule(agent.id).catch(err => {
+          console.error(`[Boot] Failed to start schedule for agent ${agent.id}:`, err);
+        });
+      }
+    } catch (err) {
+      console.error(`[Boot] Failed to restore agent schedules:`, err);
     }
-  } catch (err) {
-    console.error(`[Boot] Failed to restore agent schedules:`, err);
-  }
-});
+  });
+}
 
 export default app;
