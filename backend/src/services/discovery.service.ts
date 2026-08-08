@@ -19,7 +19,9 @@ export class HackerNewsDiscovery implements DiscoverySource {
         queryStr = '(data science OR machine learning OR analytics OR big data)';
       }
       
-      const url = `http://hn.algolia.com/api/v1/search?query=${encodeURIComponent(queryStr)}&tags=story&hitsPerPage=40`;
+      // Randomize the page (0-5) so the agent doesn't fetch the exact same top 40 results every cycle
+      const randomPage = Math.floor(Math.random() * 6);
+      const url = `http://hn.algolia.com/api/v1/search?query=${encodeURIComponent(queryStr)}&tags=story&hitsPerPage=40&page=${randomPage}`;
       const response = await fetch(url);
       const data = await response.json();
       
