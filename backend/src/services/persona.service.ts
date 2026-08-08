@@ -1,14 +1,14 @@
-import { Mistral } from '@mistralai/mistralai';
+import Groq from 'groq-sdk';
 import { config } from '../config';
 import prisma from '../db/client';
 
-const mistral = config.MISTRAL_API_KEY
-  ? new Mistral({ apiKey: config.MISTRAL_API_KEY })
+const groq = config.GROQ_API_KEY
+  ? new Groq({ apiKey: config.GROQ_API_KEY })
   : null;
 
 export class PersonaService {
   async generateVoiceGuide(name: string, domain: string): Promise<string> {
-    if (!mistral) {
+    if (!groq) {
       return this.mockVoiceGuide(name, domain);
     }
 
@@ -29,14 +29,15 @@ The voice guide MUST define:
 
 Return ONLY the voice guide text, formatted as a system prompt that can be directly used to instruct an AI to write in this persona's voice. Start with "You are ${name}..."`;
 
-      const response = await mistral.chat.complete({
-        model: 'mistral-large-latest',
+      const response = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
       });
 
       const messageContent = response.choices?.[0]?.message?.content;
       if (typeof messageContent !== 'string') {
-        throw new Error('No text response from Mistral');
+        throw new Error('No text response from Groq');
       }
 
       return messageContent.trim();

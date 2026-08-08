@@ -1,9 +1,9 @@
-import { Mistral } from '@mistralai/mistralai';
+import Groq from 'groq-sdk';
 import { config } from '../config';
 import { z } from 'zod';
 
-const mistral = config.MISTRAL_API_KEY
-  ? new Mistral({ apiKey: config.MISTRAL_API_KEY })
+const groq = config.GROQ_API_KEY
+  ? new Groq({ apiKey: config.GROQ_API_KEY })
   : null;
 
 const WriterResultSchema = z.object({
@@ -26,7 +26,7 @@ export class WriterService {
   }
 
   async writePost(topic: TopicInput, systemPrompt: string, memoryContext: any[], attempt = 1): Promise<WriterResult> {
-    if (!mistral) {
+    if (!groq) {
       return this.mockWritePost(topic);
     }
 
@@ -60,18 +60,19 @@ Respond ONLY with a JSON object in this exact format:
   "sources": ["${topic.sourceUrl}", "any other relevant URLs"]
 }`;
 
-      const response = await mistral.chat.complete({
-        model: 'mistral-large-latest',
+      const response = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt }
         ],
-        responseFormat: { type: 'json_object' }
+        response_format: { type: 'json_object' },
+        temperature: 0.7,
       });
 
       const messageContent = response.choices?.[0]?.message?.content;
       if (typeof messageContent !== 'string') {
-        throw new Error('No text response from Mistral');
+        throw new Error('No text response from Groq');
       }
 
       // Extract JSON from response

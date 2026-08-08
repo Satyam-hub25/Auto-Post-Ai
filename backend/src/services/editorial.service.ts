@@ -1,11 +1,11 @@
-import { Mistral } from '@mistralai/mistralai';
+import Groq from 'groq-sdk';
 import { z } from 'zod';
 import { config } from '../config';
 import prisma from '../db/client';
 import crypto from 'crypto';
 
-const mistral = config.MISTRAL_API_KEY
-  ? new Mistral({ apiKey: config.MISTRAL_API_KEY })
+const groq = config.GROQ_API_KEY
+  ? new Groq({ apiKey: config.GROQ_API_KEY })
   : null;
 
 const RubricResultSchema = z.object({
@@ -146,9 +146,9 @@ export class EditorialService {
     recentPosts: any[],
     attempt = 1
   ): Promise<Map<string, EvaluationOutput>> {
-    if (!mistral) {
+    if (!groq) {
       const map = new Map<string, EvaluationOutput>();
-      candidates.forEach(c => map.set(c.title, this.fallbackEvaluate(c, personaVoice, 'No Mistral API key configured.')));
+      candidates.forEach(c => map.set(c.title, this.fallbackEvaluate(c, personaVoice, 'No Groq API key configured.')));
       return map;
     }
 
@@ -203,15 +203,16 @@ Respond ONLY with a JSON object in this exact format:
   ]
 }`;
 
-      const response = await mistral.chat.complete({
-        model: 'mistral-large-latest',
+      const response = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
-        responseFormat: { type: 'json_object' }
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
       });
       console.log(`[EVALUATION] Model batch response received (Attempt ${attempt})`);
 
       const messageContent = response.choices?.[0]?.message?.content;
-      if (typeof messageContent !== 'string') throw new Error('No text response from Mistral');
+      if (typeof messageContent !== 'string') throw new Error('No text response from Groq');
 
       let jsonStr = messageContent.trim();
       const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
@@ -243,7 +244,7 @@ Respond ONLY with a JSON object in this exact format:
 
     } catch (error: any) {
       const isRateLimit = error?.status === 429 || error?.message?.includes('429');
-      console.error(`[LLM ERROR] Provider: Mistral | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
+      console.error(`[LLM ERROR] Provider: Groq | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
       
       if (isRateLimit && attempt <= 3) {
         const backoffMs = attempt === 1 ? 2000 : attempt === 2 ? 5000 : 10000;
