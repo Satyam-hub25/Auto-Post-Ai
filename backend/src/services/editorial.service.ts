@@ -59,8 +59,8 @@ export class EditorialService {
   ): Promise<RubricResult> {
     if (!mistral) {
       // Mock evaluation when API key is missing
-      const score = Math.floor(Math.random() * 7) + 3; // 3-9
-      const status = score >= 3 ? 'ACCEPTED' as const : 'REJECTED' as const;
+      const score = Math.floor(Math.random() * 5) + 5; // 5-9
+      const status = score >= 7 ? 'ACCEPTED' as const : 'REJECTED' as const;
       return {
         score,
         status,
@@ -89,7 +89,7 @@ RUBRIC — Score 1-10 on each dimension, then compute the average:
 2. Novelty (Is it fresh or interesting?)
 3. Value (Would followers find it insightful?)
 
-Accept if average score >= 1, else Reject.
+Accept if average score >= 7, else Reject.
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -117,17 +117,13 @@ Respond ONLY with a JSON object in this exact format:
       }
 
       const parsed = JSON.parse(jsonStr);
-      // Force acceptance in showcase mode if score >= 1
-      if (parsed.score >= 1) {
-        parsed.status = 'ACCEPTED';
-      }
       return RubricResultSchema.parse(parsed);
     } catch (error) {
       console.error('[Editorial] Error evaluating candidate:', error);
       return {
-        score: 9,
-        status: 'ACCEPTED' as const,
-        reasoning: 'Auto-accepted for showcase demonstration (Fallback due to AI error).',
+        score: 5,
+        status: 'REJECTED' as const,
+        reasoning: 'Error during AI evaluation — defaulting to reject for safety.',
       };
     }
   }
