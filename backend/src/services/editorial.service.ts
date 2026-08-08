@@ -253,7 +253,7 @@ Respond ONLY with a JSON object in this exact format:
 
   private fallbackEvaluate(candidate: CandidateInput, personaVoice: string, errorContext: string): EvaluationOutput {
     // STRICT Deterministic fallback based on heuristics
-    let score = 0;
+    let score = 20; // baseline score so strong candidates can realistically hit 80+
     const candidateText = (candidate.title + ' ' + (candidate.summary || '')).toLowerCase();
     
     // Domain keyword matching (up to 30 points, but requires multiple strong hits)
@@ -277,11 +277,18 @@ Respond ONLY with a JSON object in this exact format:
 
     const finalScore = Math.min(score, 100);
     const finalStatus = this.determineStatus(finalScore);
+    
+    let reasonText = '';
+    if (finalStatus === 'ACCEPTED' || finalStatus === 'CONSIDER') {
+      reasonText = `Accepted based on high domain relevance, source quality, and technical keywords. (Keywords matched: ${matchCount})`;
+    } else {
+      reasonText = `Rejected because the topic has weak relevance to the configured AI & technology persona, or lacks source authority. (Keywords matched: ${matchCount})`;
+    }
 
     return {
       score: finalScore,
       status: finalStatus,
-      reasoning: `Rejected because the topic has weak relevance to the configured AI & technology persona. (Keywords matched: ${matchCount})`,
+      reasoning: reasonText,
       evaluationData: {
         relevance: finalScore, novelty: 50, personaFit: 50, currentRelevance: 50, sourceQuality: 50, contentValue: 50
       },
