@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id           String   @id @default(uuid())
+  personaName  String
+  domain       String
+  voiceGuide   String
+  systemPrompt String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  posts        Post[]
+  candidates   TopicCandidate[]
+}
+
+model Post {
+  id        String   @id @default(uuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id])
+  text      String
+  rationale String   @default("")
+  sources   String   @default("[]")
+  keywords  String   @default("[]")
+  createdAt DateTime @default(now())
+}
+
+model TopicCandidate {
+  id           String   @id @default(uuid())
+  agentId      String
+  agent        Agent    @relation(fields: [agentId], references: [id])
+  title        String
+  summary      String   @default("")
+  sourceUrl    String
+  score        Float    @default(0)
+  status       String   @default("PENDING")
+  reason       String   @default("")
+  discoveredAt DateTime @default(now())
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
