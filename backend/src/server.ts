@@ -57,7 +57,7 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   app.listen(PORT, async () => {
     console.log(`\n🚀 Autonomous AI Creator Backend running on port ${PORT}`);
     console.log(`   Health: http://localhost:${PORT}/api/health`);
-    console.log(`   Mistral API: ${config.MISTRAL_API_KEY ? '✅ Configured' : '⚠️  Not configured (mock mode)'}`);
+    console.log(`   Groq API: ${config.GROQ_API_KEY ? '✅ Configured' : '⚠️  Not configured (mock mode)'}`);
     console.log(`   Discovery: ${config.DISCOVERY_SOURCE}`);
     console.log(`   Schedule: ${config.CRON_INTERVAL_MIN}-${config.CRON_INTERVAL_MAX} min intervals\n`);
 
