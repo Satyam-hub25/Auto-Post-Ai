@@ -9,6 +9,9 @@ import adminRoutes from './routes/admin.routes';
 
 const app = express();
 
+// Trust proxy for Render deployment (fixes express-rate-limit warning)
+app.set('trust proxy', 1);
+
 // Security and middleware
 app.use(helmet());
 app.use(cors({
