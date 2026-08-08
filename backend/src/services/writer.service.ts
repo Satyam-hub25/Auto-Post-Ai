@@ -89,7 +89,7 @@ Respond ONLY with a JSON object in this exact format:
       console.error(`[Writer] Error generating post | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
       
       if (isRateLimit && attempt <= 3) {
-        const backoffMs = attempt === 1 ? 2000 : attempt === 2 ? 5000 : 10000;
+        const backoffMs = attempt === 1 ? 10000 : attempt === 2 ? 20000 : 40000;
         console.log(`[Writer] LLM RATE LIMIT. Next retry in: ${backoffMs}ms`);
         await this.delay(backoffMs);
         return this.writePost(topic, systemPrompt, memoryContext, attempt + 1);

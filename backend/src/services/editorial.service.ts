@@ -122,6 +122,10 @@ export class EditorialService {
       const allResults = new Map<string, EvaluationOutput>();
       
       for (let i = 0; i < toEvaluateBatch.length; i += CHUNK_SIZE) {
+        if (i > 0) {
+          console.log('[EVALUATION] Waiting 8 seconds before next chunk to avoid Groq rate limits...');
+          await this.delay(8000);
+        }
         const chunk = toEvaluateBatch.slice(i, i + CHUNK_SIZE);
         console.log(`[EVALUATION] Batch evaluating chunk ${Math.floor(i/CHUNK_SIZE) + 1} (${chunk.length} topics)...`);
         const chunkResults = await this.evaluateBatchWithRetry(chunk, personaVoice, recentPosts);
@@ -316,7 +320,7 @@ Respond ONLY with a JSON object in this exact format:
       console.error(`[LLM ERROR] Provider: Groq | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
       
       if (isRateLimit && attempt <= 3) {
-        const backoffMs = attempt === 1 ? 2000 : attempt === 2 ? 5000 : 10000;
+        const backoffMs = attempt === 1 ? 10000 : attempt === 2 ? 20000 : 40000;
         console.log(`[LLM RATE LIMIT] Next retry in: ${backoffMs}ms`);
         await this.delay(backoffMs);
         return this.evaluateBatchWithRetry(candidates, personaVoice, recentPosts, attempt + 1);
