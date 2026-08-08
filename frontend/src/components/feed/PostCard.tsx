@@ -12,6 +12,15 @@ export interface Post {
   text: string;
   rationale: string;
   sources: string[];
+  scores?: {
+    novelty: number;
+    substance: number;
+    credibility: number;
+    relevance: number;
+    timeliness: number;
+    score: number;
+  };
+  candidatesCount?: number;
 }
 interface PostCardProps {
   post: Post;
@@ -81,8 +90,7 @@ export function PostCard({ post, personaName }: PostCardProps) {
 
       <RationalePanel
         isExpanded={isExpanded}
-        rationale={post.rationale}
-        sources={post.sources}
+        post={post}
       />
     </Card>
   );

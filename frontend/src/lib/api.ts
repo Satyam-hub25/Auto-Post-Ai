@@ -27,6 +27,15 @@ export const api = {
         text: string;
         rationale: string;
         sources: string[];
+        candidatesCount?: number;
+        scores?: {
+          novelty: number;
+          substance: number;
+          credibility: number;
+          relevance: number;
+          timeliness: number;
+          score: number;
+        };
       }>;
     }>(`/api/agent/feed?agentId=${agentId}`),
   getAgents: () =>
@@ -68,6 +77,15 @@ export const api = {
       topSources: Array<{ source: string; count: number }>;
       totalPosts: number;
       totalTopics: number;
+      averages?: {
+        score: number;
+        novelty: number;
+        substance: number;
+        credibility: number;
+        relevance: number;
+        timeliness: number;
+      } | null;
+      topRejections?: Array<{ reason: string; count: number }>;
     }>(`/api/admin/analytics/${agentId}`),
   forceCycle: (agentId: string, token: string) =>
     request<{ message: string }>(`/api/admin/force-cycle/${agentId}`, {
