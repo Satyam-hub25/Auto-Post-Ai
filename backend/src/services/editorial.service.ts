@@ -28,25 +28,54 @@ export class EditorialService {
     personaVoice: string,
     recentPosts: any[]
   ) {
-    const results = [];
+    const evaluated = [];
 
+    // 1. Evaluate all candidates
     for (const candidate of candidates) {
       const evaluation = await this.evaluateSingle(candidate, personaVoice, recentPosts);
+      evaluated.push({ candidate, evaluation });
+    }
 
+    // 2. Sort by score descending (best first)
+    evaluated.sort((a, b) => b.evaluation.score - a.evaluation.score);
+
+    const results = [];
+    let acceptCount = 0;
+
+    // 3. Apply batch rules: at least 1, at most 3
+    for (let i = 0; i < evaluated.length; i++) {
+      const item = evaluated[i];
+      let finalStatus: 'ACCEPTED' | 'REJECTED' = 'REJECTED';
+      let finalReason = item.evaluation.reasoning;
+
+      if (acceptCount < 3) {
+        // If it was accepted by AI, or if we haven't accepted anything yet (force accept the best one)
+        if (item.evaluation.status === 'ACCEPTED' || acceptCount === 0) {
+          finalStatus = 'ACCEPTED';
+          if (item.evaluation.status !== 'ACCEPTED') {
+             finalReason = `Forced acceptance (best available candidate). AI Reasoning: ${finalReason}`;
+          }
+          acceptCount++;
+        }
+      } else if (item.evaluation.status === 'ACCEPTED') {
+        finalReason = `Rejected due to batch limits (max 3). AI Reasoning: ${finalReason}`;
+      }
+
+      // 4. Save to DB
       const savedCandidate = await prisma.topicCandidate.create({
         data: {
           agentId,
-          title: candidate.title,
-          summary: candidate.summary || '',
-          sourceUrl: candidate.sourceUrl,
-          score: evaluation.score,
-          status: evaluation.status,
-          reason: evaluation.reasoning,
+          title: item.candidate.title,
+          summary: item.candidate.summary || '',
+          sourceUrl: item.candidate.sourceUrl,
+          score: item.evaluation.score,
+          status: finalStatus,
+          reason: finalReason,
         },
       });
 
       results.push(savedCandidate);
-      console.log(`[Editorial] "${candidate.title}" → ${evaluation.status} (score: ${evaluation.score})`);
+      console.log(`[Editorial] "${item.candidate.title}" → ${finalStatus} (score: ${item.evaluation.score})`);
     }
 
     return results;
