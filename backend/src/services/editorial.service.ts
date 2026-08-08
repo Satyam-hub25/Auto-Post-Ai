@@ -59,8 +59,8 @@ export class EditorialService {
   ): Promise<RubricResult> {
     if (!mistral) {
       // Mock evaluation when API key is missing
-      const score = Math.floor(Math.random() * 5) + 5; // 5-9
-      const status = score >= 7 ? 'ACCEPTED' as const : 'REJECTED' as const;
+      const score = Math.floor(Math.random() * 7) + 3; // 3-9
+      const status = score >= 3 ? 'ACCEPTED' as const : 'REJECTED' as const;
       return {
         score,
         status,
@@ -85,12 +85,11 @@ Summary: ${candidate.summary || 'No summary available'}
 URL: ${candidate.sourceUrl}
 
 RUBRIC — Score 1-10 on each dimension, then compute the average:
-1. Relevance to the persona's domain
-2. Novelty (not covered in recent posts)
-3. Persona-fit (matches the voice/expertise)
-4. Timeliness (relevant right now)
+1. Relevance (Is it strictly related to the domain?)
+2. Novelty (Is it fresh or interesting?)
+3. Value (Would followers find it insightful?)
 
-Accept if average score >= 7, else Reject.
+Accept if average score >= 3, else Reject.
 
 Respond ONLY with a JSON object in this exact format:
 {
