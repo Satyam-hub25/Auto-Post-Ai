@@ -21,7 +21,11 @@ interface TopicInput {
 }
 
 export class WriterService {
-  async writePost(topic: TopicInput, systemPrompt: string, memoryContext: any[]): Promise<WriterResult> {
+  private delay(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async writePost(topic: TopicInput, systemPrompt: string, memoryContext: any[], attempt = 1): Promise<WriterResult> {
     if (!mistral) {
       return this.mockWritePost(topic);
     }
@@ -79,8 +83,18 @@ Respond ONLY with a JSON object in this exact format:
 
       const parsed = JSON.parse(jsonStr);
       return WriterResultSchema.parse(parsed);
-    } catch (error) {
-      console.error('[Writer] Error generating post, falling back to mock:', error);
+    } catch (error: any) {
+      const isRateLimit = error?.status === 429 || error?.message?.includes('429');
+      console.error(`[Writer] Error generating post | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
+      
+      if (isRateLimit && attempt <= 3) {
+        const backoffMs = attempt === 1 ? 2000 : attempt === 2 ? 5000 : 10000;
+        console.log(`[Writer] LLM RATE LIMIT. Next retry in: ${backoffMs}ms`);
+        await this.delay(backoffMs);
+        return this.writePost(topic, systemPrompt, memoryContext, attempt + 1);
+      }
+
+      console.error('[Writer] Retry exhausted or fatal error, falling back to mock:', error?.message || error);
       return this.mockWritePost(topic);
     }
   }
