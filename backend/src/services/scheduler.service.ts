@@ -82,7 +82,7 @@ export class SchedulerService {
         const text = (c.title + ' ' + (c.summary || '')).toLowerCase();
         
         // Fast hard rejections for promotional/generic content
-        const blockedKeywords = ['discount', 'ticket', 'sponsor', 'event', 'playlist', 'tutorial', 'marketing', 'promo'];
+        const blockedKeywords = ['discount', 'ticket', 'sponsor', 'event', 'playlist', 'tutorial', 'marketing', 'promo', 'hiring', 'job opening'];
         if (blockedKeywords.some(kw => text.includes(kw))) return false;
         
         if (text.length < 10) return false; // Basic sanity check

@@ -76,6 +76,7 @@ Respond ONLY with a JSON object in this exact format:
         ],
         response_format: { type: 'json_object' },
         temperature: 0.7,
+        max_tokens: 1500,
       });
 
       const messageContent = response.choices?.[0]?.message?.content;
