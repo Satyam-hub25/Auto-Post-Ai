@@ -60,8 +60,8 @@ export class SchedulerService {
     }
 
     this.runningCycles.add(agentId);
-    try {
-      const startTime = Date.now();
+    
+    const startTime = Date.now();
     console.log(`\n${'═'.repeat(60)}`);
     console.log(`  AUTONOMOUS CYCLE — Agent ${agentId}`);
     console.log(`  Started: ${new Date().toISOString()}`);
