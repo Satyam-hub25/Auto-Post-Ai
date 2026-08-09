@@ -9,6 +9,7 @@ import { config } from '../config';
 
 export class SchedulerService {
   private activeJobs: Map<string, cron.ScheduledTask> = new Map();
+  private runningCycles: Set<string> = new Set(); // Prevent concurrent cycles for same agent
 
   async startAgentSchedule(agentId: string): Promise<void> {
     // Stop existing job if any
@@ -33,13 +34,14 @@ export class SchedulerService {
 
     this.activeJobs.set(agentId, job);
 
-    // Kick off one immediate cycle (async, non-blocking) so the feed isn't empty
-    console.log(`[Scheduler] Agent ${agentId}: Kicking off immediate first cycle`);
+    // Stagger immediate startup to prevent DB connection exhaustion when multiple agents start
+    const staggerMs = Math.floor(Math.random() * 15000); // Random delay up to 15 seconds
+    console.log(`[Scheduler] Agent ${agentId}: Kicking off first cycle in ${Math.round(staggerMs/1000)}s`);
     setTimeout(() => {
       this.runCycleNow(agentId).catch(err => {
         console.error(`[Scheduler] Agent ${agentId}: First cycle error:`, err);
       });
-    }, 2000);
+    }, staggerMs);
   }
 
   stopAgentSchedule(agentId: string): void {
@@ -47,12 +49,19 @@ export class SchedulerService {
     if (job) {
       job.stop();
       this.activeJobs.delete(agentId);
-      console.log(`[Scheduler] Agent ${agentId}: Cron job stopped`);
+      console.log(`[Scheduler] Agent ${agentId}: Schedule stopped`);
     }
   }
 
   async runCycleNow(agentId: string): Promise<void> {
-    const startTime = Date.now();
+    if (this.runningCycles.has(agentId)) {
+      console.log(`[Scheduler] Agent ${agentId}: Cycle already in progress. Skipping to prevent overlap.`);
+      return;
+    }
+
+    this.runningCycles.add(agentId);
+    try {
+      const startTime = Date.now();
     console.log(`\n${'═'.repeat(60)}`);
     console.log(`  AUTONOMOUS CYCLE — Agent ${agentId}`);
     console.log(`  Started: ${new Date().toISOString()}`);
@@ -178,6 +187,8 @@ export class SchedulerService {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.error(`\n[Cycle] ❌ CYCLE FAILED after ${elapsed}s:`, error);
       console.log(`${'═'.repeat(60)}\n`);
+    } finally {
+      this.runningCycles.delete(agentId);
     }
   }
 }
