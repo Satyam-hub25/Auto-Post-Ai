@@ -61,12 +61,10 @@ INSTRUCTIONS:
 5. Use markdown formatting (headers, bold, lists) for readability.
 6. Reference the exact source URL provided.
 
-Respond ONLY with a JSON object in this exact format:
-{
-  "text": "The full markdown content of the post...",
-  "rationale": "Write a 4-point rationale explaining: 1. Why this topic? 2. Why now? 3. Why over other candidates? 4. What makes it valuable to the audience? Make it sound like an editorial decision (e.g. 'This topic was selected because...').",
-  "sources": ["${topic.sourceUrl}", "any other relevant URLs"]
-}`;
+OUTPUT FORMAT:
+Write the full post in markdown. At the very end of your response, add a line "---RATIONALE---" followed by a 2-3 sentence editorial rationale explaining why this topic was selected.
+
+Do NOT wrap in JSON. Just write the post directly in markdown.`;
 
       const response = await groq.chat.completions.create({
         model: 'llama-3.1-8b-instant',
@@ -74,25 +72,25 @@ Respond ONLY with a JSON object in this exact format:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt }
         ],
-        response_format: { type: 'json_object' },
         temperature: 0.7,
-        max_tokens: 1500,
+        max_tokens: 2000,
       });
 
       const messageContent = response.choices?.[0]?.message?.content;
-      if (typeof messageContent !== 'string') {
+      if (typeof messageContent !== 'string' || messageContent.trim().length === 0) {
         throw new Error('No text response from Groq');
       }
 
-      // Extract JSON from response
-      let jsonStr = messageContent.trim();
-      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      }
+      // Split response into post content and rationale
+      const parts = messageContent.split('---RATIONALE---');
+      const postText = parts[0].trim();
+      const rationale = parts[1]?.trim() || `Selected "${topic.title}" because it represents a timely and relevant development in the field.`;
 
-      const parsed = JSON.parse(jsonStr);
-      return WriterResultSchema.parse(parsed);
+      return {
+        text: postText,
+        rationale,
+        sources: [topic.sourceUrl],
+      };
     } catch (error: any) {
       const isRateLimit = error?.status === 429 || error?.message?.includes('429');
       console.error(`[Writer] Error generating post | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
