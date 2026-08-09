@@ -1,6 +1,9 @@
+import * as cheerio from 'cheerio';
+
 export interface TopicCandidate {
   title: string;
   summary?: string;
+  content?: string;
   sourceUrl: string;
 }
 
@@ -9,28 +12,57 @@ export interface DiscoverySource {
 }
 
 export class HackerNewsDiscovery implements DiscoverySource {
-  async discover(domain: string): Promise<TopicCandidate[]> {
+  private async fetchContent(url: string): Promise<string | undefined> {
     try {
-      // Expand query for specific niche domains to ensure enough hits
-      let queryStr = domain.toLowerCase();
-      if (queryStr.includes('cybersecurity') || queryStr.includes('security')) {
-        queryStr = '(cybersecurity OR security OR vulnerability OR hack OR breach OR infosec)';
-      } else if (queryStr.includes('data science') || queryStr.includes('analytics')) {
-        queryStr = '(data science OR machine learning OR analytics OR big data)';
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) return undefined;
+      const html = await res.text();
+      const $ = cheerio.load(html);
+      
+      // Remove noise
+      $('script, style, nav, footer, header, iframe, noscript').remove();
+      
+      // Extract main text
+      let text = $('article, main, .content, .post').text();
+      if (!text || text.trim().length < 100) {
+        text = $('body').text();
       }
       
-      // Randomize the page (0-5) so the agent doesn't fetch the exact same top 40 results every cycle
-      const randomPage = Math.floor(Math.random() * 6);
-      const url = `http://hn.algolia.com/api/v1/search?query=${encodeURIComponent(queryStr)}&tags=story&hitsPerPage=40&page=${randomPage}`;
+      // Clean up whitespace
+      return text.replace(/\s+/g, ' ').trim().substring(0, 5000); // Limit to 5000 chars to avoid massive LLM context
+    } catch (e) {
+      return undefined;
+    }
+  }
+
+  async discover(domain: string): Promise<TopicCandidate[]> {
+    try {
+      // Broadened query to catch more technology topics
+      const url = `http://hn.algolia.com/api/v1/search?query=technology OR software OR AI OR engineering&tags=story&hitsPerPage=40`;
       const response = await fetch(url);
       const data = await response.json();
       
-      const candidates: TopicCandidate[] = data.hits
-        .map((hit: any) => ({
+      const candidates: TopicCandidate[] = [];
+      for (const hit of data.hits) {
+        const sourceUrl = hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`;
+        
+        candidates.push({
           title: hit.title,
           summary: hit.story_text || undefined,
-          sourceUrl: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
-        }));
+          sourceUrl,
+        });
+      }
+      
+      // Fetch content for top 15 to keep it fast
+      for (let i = 0; i < Math.min(candidates.length, 15); i++) {
+         if (candidates[i].sourceUrl && !candidates[i].sourceUrl.includes('news.ycombinator.com')) {
+           candidates[i].content = await this.fetchContent(candidates[i].sourceUrl);
+         }
+      }
         
       return candidates;
     } catch (error) {

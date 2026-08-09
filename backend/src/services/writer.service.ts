@@ -17,6 +17,7 @@ type WriterResult = z.infer<typeof WriterResultSchema>;
 interface TopicInput {
   title: string;
   summary?: string;
+  content?: string;
   sourceUrl: string;
 }
 
@@ -36,22 +37,29 @@ export class WriterService {
         .map((p: any) => `- ${p.text?.substring(0, 150) || 'Previous post'}`)
         .join('\n');
 
-      const prompt = `Write a thoughtful, opinionated blog post/article (600-1200 words) about the following topic.
+      const prompt = `Write an original, research-style technology post (600-1200 words) about the following topic.
 
 TOPIC:
 Title: ${topic.title}
-Summary: ${topic.summary || 'No summary available'}
+Content/Summary: ${topic.content ? topic.content.substring(0, 3000) : (topic.summary || 'No summary available')}
 Source URL: ${topic.sourceUrl}
 
 CONTEXT — Recent posts to avoid repetition:
 ${recentContext || 'No previous posts yet.'}
 
 INSTRUCTIONS:
-1. Write in the persona's voice as defined in the system prompt
-2. Avoid generic filler (e.g. "The tech landscape continues to evolve")
-3. Include: What happened, why it matters, technical implications, persona-specific perspective, evidence, and what could happen next.
-4. Use markdown formatting (headers, bold, lists) for readability.
-5. Reference the exact source URL provided.
+1. Write in the persona's voice as defined in the system prompt.
+2. Create an original research-style technology post. Do NOT simply copy or summarize the source.
+3. Structure the post to:
+   - Explain what happened / what the topic is about.
+   - Provide technical context.
+   - Explain why it matters.
+   - Add a unique angle or original analysis.
+   - Provide implications for the industry or developers.
+   - Discuss limitations when relevant.
+4. Clearly separate facts from analysis.
+5. Use markdown formatting (headers, bold, lists) for readability.
+6. Reference the exact source URL provided.
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -89,7 +97,7 @@ Respond ONLY with a JSON object in this exact format:
       console.error(`[Writer] Error generating post | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
       
       if (isRateLimit && attempt <= 3) {
-        const backoffMs = attempt === 1 ? 10000 : attempt === 2 ? 20000 : 40000;
+        const backoffMs = attempt === 1 ? 2000 : attempt === 2 ? 5000 : 10000;
         console.log(`[Writer] LLM RATE LIMIT. Next retry in: ${backoffMs}ms`);
         await this.delay(backoffMs);
         return this.writePost(topic, systemPrompt, memoryContext, attempt + 1);

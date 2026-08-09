@@ -32,13 +32,18 @@ export class MemoryService {
     });
   }
 
-  async isTooSimilar(topicTitle: string, topicSummary: string = '', agentId: string, threshold: number = 0.6): Promise<boolean> {
-    const recentPosts = await this.getRecentContext(agentId, 20);
+  async isTooSimilar(topicTitle: string, topicSummary: string = '', agentId: string, threshold: number = 0.75): Promise<boolean> {
+    const recentPosts = await this.getRecentContext(agentId, 30);
     const newKeywords = new Set(this.extractKeywords(`${topicTitle} ${topicSummary}`));
     
     if (newKeywords.size === 0) return false;
 
+    // Check exact title matches just in case
     for (const post of recentPosts) {
+      if (post.text && post.text.toLowerCase().includes(topicTitle.toLowerCase())) {
+        return true;
+      }
+      
       if (!post.keywords || post.keywords === '[]') continue;
       
       const existingKeywords = new Set(JSON.parse(post.keywords as string));
@@ -48,7 +53,11 @@ export class MemoryService {
         if (existingKeywords.has(keyword)) overlap++;
       }
       
-      const similarity = overlap / newKeywords.size;
+      // Calculate Jaccard similarity instead of just overlap proportion to be more accurate
+      const unionSize = newKeywords.size + existingKeywords.size - overlap;
+      const similarity = overlap / (unionSize || 1);
+      
+      // Only reject if they are extremely similar (e.g. same specific topic, not just same broad category)
       if (similarity >= threshold) {
         return true;
       }

@@ -30,12 +30,13 @@ interface CandidateInput {
   id?: string; // used internally for batch mapping
   title: string;
   summary?: string;
+  content?: string;
   sourceUrl: string;
 }
 
 interface EvaluationOutput {
   score: number;
-  status: 'ACCEPTED' | 'CONSIDER' | 'REJECTED';
+  status: 'ACCEPTED' | 'CONSIDER' | 'REJECTED' | 'PENDING_RETRY';
   reasoning: string;
   evaluationData: any;
   evaluationMethod: string;
@@ -53,7 +54,7 @@ export class EditorialService {
   private normalizeUrl(url: string): string {
     try {
       const u = new URL(url);
-      return (u.hostname + u.pathname).toLowerCase().replace(/\/$/, '');
+      return (u.hostname + u.pathname + u.search).toLowerCase().replace(/\/$/, '');
     } catch {
       return url.toLowerCase().trim();
     }
@@ -68,7 +69,7 @@ export class EditorialService {
     candidates: CandidateInput[],
     personaVoice: string,
     recentPosts: any[]
-  ) {
+  ): Promise<(import('@prisma/client').TopicCandidate & { _content?: string })[]> {
     const evaluated: { candidate: CandidateInput, evaluation: EvaluationOutput }[] = [];
     const toEvaluateBatch: CandidateInput[] = [];
 
@@ -89,31 +90,15 @@ export class EditorialService {
     }
     console.log(`[DEDUP] ${candidates.length} candidates → ${dedupedCandidates.length} unique`);
 
-    // 1. Check cache and Database first to prevent cross-cycle duplicates
+    // 1. Check cache first
     for (const candidate of dedupedCandidates) {
       const hash = this.getTopicHash(candidate);
-      
-      // First check memory cache
       if (evaluationCache.has(hash)) {
         console.log(`[EVALUATION] Using cached result for: "${candidate.title}"`);
         evaluated.push({ candidate, evaluation: evaluationCache.get(hash)! });
-        continue;
+      } else {
+        toEvaluateBatch.push(candidate);
       }
-
-      // Then check Database to see if this agent already evaluated this URL
-      const existingDbRecord = await prisma.topicCandidate.findFirst({
-        where: {
-          agentId,
-          sourceUrl: candidate.sourceUrl
-        }
-      });
-
-      if (existingDbRecord) {
-        console.log(`[DEDUP] Skipping already evaluated topic from DB: "${candidate.title}"`);
-        continue; // Drop completely to avoid re-publishing
-      }
-
-      toEvaluateBatch.push(candidate);
     }
 
     // 2. Batch Evaluate remaining via LLM (in chunks of 10)
@@ -122,10 +107,6 @@ export class EditorialService {
       const allResults = new Map<string, EvaluationOutput>();
       
       for (let i = 0; i < toEvaluateBatch.length; i += CHUNK_SIZE) {
-        if (i > 0) {
-          console.log('[EVALUATION] Waiting 8 seconds before next chunk to avoid Groq rate limits...');
-          await this.delay(8000);
-        }
         const chunk = toEvaluateBatch.slice(i, i + CHUNK_SIZE);
         console.log(`[EVALUATION] Batch evaluating chunk ${Math.floor(i/CHUNK_SIZE) + 1} (${chunk.length} topics)...`);
         const chunkResults = await this.evaluateBatchWithRetry(chunk, personaVoice, recentPosts);
@@ -165,7 +146,7 @@ export class EditorialService {
       });
       // Attach the DB ID back so scheduler can link it to the Post
       item.candidate.id = savedCandidate.id;
-      results.push(savedCandidate);
+      results.push({ ...savedCandidate, _content: item.candidate.content });
     }
 
     return results;
@@ -221,56 +202,53 @@ export class EditorialService {
 [ID: ${i}]
 Title: ${c.title}
 URL: ${c.sourceUrl}
-Summary: ${c.summary?.substring(0, 200) || 'None'}
+Content Preview: ${c.content ? c.content.substring(0, 1500) : (c.summary?.substring(0, 200) || 'None')}
 `).join('\n');
 
-      const prompt = `You are a selective technology editor evaluating topic candidates for publication. You apply rigorous editorial standards — approximately 30% of candidates should be accepted and 70% rejected based on genuine quality assessment.
+      const prompt = `You are a technology researcher and editor evaluating topics. Judge the actual content, not just the title. Accept strong, useful topics naturally.
 
-A topic is RELEVANT if it meaningfully discusses: AI, machine learning, software engineering, web development, programming, developer tools, cloud computing, cybersecurity, databases, open source, computer science, robotics, automation, the technology industry, technical careers, developer education, technology trends, computing infrastructure, or technical research.
+A topic is RELEVANT if it discusses: AI, software engineering, cybersecurity, developer tools, open source, cloud, databases, robotics, programming, tech careers, or technology trends. Do not reject a topic just because it does not contain "AI".
 
 PERSONA VOICE:
 ${personaVoice}
 
 RECENT POSTS (MEMORY):
 ${recentContext || 'None yet'}
-If a candidate is highly similar to an existing post, significantly reduce the "novelty" score.
+If highly similar to an existing post, reduce novelty.
 
 CANDIDATES:
 ${candidateListStr}
 
-For EACH candidate, evaluate these 5 criteria from 0-100. Use the FULL scoring range — most topics should score between 40 and 75. Reserve scores above 75 for genuinely strong candidates:
-1. novelty: Does this provide something meaningfully new? Be strict — generic or frequently-discussed topics should score 40-55.
-2. substance: Is there enough technical depth or analytical substance to write a valuable, original post? Vague titles, listicles, and shallow overviews should score 30-50.
-3. credibility: Is the source trustworthy? (GitHub, HN discussions, engineering blogs, official docs = 70-90. Unknown blogs, aggregators = 40-55. Spam/affiliate = 10-25.)
-4. relevance: Does this topic relate to technology, engineering, or the configured persona's domain? Tangentially related = 40-55. Directly relevant = 70-90.
-5. timeliness: Is this topic currently relevant? Evergreen = 50-60. Timely/breaking = 70-90. Dated = 20-40.
+EVALUATE these 5 criteria from 0-100:
+1. novelty: Does this provide something new or an interesting perspective?
+2. substance: Is there enough technical or analytical substance to write a valuable post? A good technical blog, Hacker News discussion, industry analysis, or opinion is acceptable.
+3. credibility: Is the source trustworthy? (Do not require an academic paper, GitHub repo, or famous source for every topic).
+4. relevance: Genuine technology relevance to the persona's domain?
+5. timeliness: Is this topic currently relevant or does it have strong evergreen analytical value? Avoid old/stale content without recent updates.
 
-Calculate a final 'score' by weighting: Novelty(20%) + Substance(25%) + Credibility(20%) + Relevance(20%) + Timeliness(15%).
+Calculate final 'score': Novelty(20%) + Substance(25%) + Credibility(20%) + Relevance(20%) + Timeliness(15%).
 
 Decision guide:
-- 75-100: ACCEPT — strong candidate worth publishing
-- 65-74: CONSIDER — borderline, only accept if substance and relevance are both strong
-- 50-64: REJECT — insufficient quality for publication
-- Below 50: REJECT — clearly weak, off-topic, or promotional
+- 70-100: ACCEPT - genuine tech relevance, enough substance, interesting angle, reasonable credibility.
+- 60-69: CONSIDER - borderline.
+- Below 60: REJECT - low value.
 
-Always REJECT: advertisements, ticket sales, discount promotions, conference marketing, job ads, affiliate content, spam, completely unrelated topics, obvious duplicates, extremely shallow content.
-
-Do NOT reject a topic simply because it is a discussion, a personal blog, or from a non-academic source. Evaluate the actual content quality.
-
-Provide 2-3 sentences of 'reasoning' explaining the specific editorial reason for rejection or acceptance.
+Only REJECT obvious low-value content (ads, jobs, spam, duplicates, entirely irrelevant, extremely shallow).
+Every rejection MUST have a SPECIFIC human-readable reason based on the actual content. Never use reasons like "low relevance" or "weak keywords".
+Acceptance reasons must explain why it matters, why it's interesting, and why it's worth publishing.
 
 Respond ONLY with a JSON object in this exact format:
 {
   "evaluations": [
     {
       "topicId": "0",
-      "novelty": 55,
-      "substance": 72,
-      "credibility": 68,
-      "relevance": 80,
-      "timeliness": 65,
-      "score": 69,
-      "decision": "CONSIDER",
+      "novelty": 75,
+      "substance": 80,
+      "credibility": 80,
+      "relevance": 90,
+      "timeliness": 70,
+      "score": 79,
+      "decision": "ACCEPT",
       "reasoning": "..."
     }
   ]
@@ -320,15 +298,21 @@ Respond ONLY with a JSON object in this exact format:
       console.error(`[LLM ERROR] Provider: Groq | Status: ${error?.status || 'Unknown'} | Attempt: ${attempt}`);
       
       if (isRateLimit && attempt <= 3) {
-        const backoffMs = attempt === 1 ? 10000 : attempt === 2 ? 20000 : 40000;
+        const backoffMs = attempt === 1 ? 2000 : attempt === 2 ? 5000 : 10000;
         console.log(`[LLM RATE LIMIT] Next retry in: ${backoffMs}ms`);
         await this.delay(backoffMs);
         return this.evaluateBatchWithRetry(candidates, personaVoice, recentPosts, attempt + 1);
       }
 
-      console.error(`[LLM ERROR] Retry exhausted. Using deterministic fallback.`);
+      console.error(`[LLM ERROR] Retry exhausted or fatal error. Setting status to PENDING_RETRY.`);
       const map = new Map<string, EvaluationOutput>();
-      candidates.forEach(c => map.set(c.title, this.fallbackEvaluate(c, personaVoice, `LLM Error: ${error?.message || 'Unknown'}`)));
+      candidates.forEach(c => map.set(c.title, {
+        score: 0,
+        status: 'PENDING_RETRY',
+        reasoning: `API Failure: ${error?.message || 'Unknown LLM Error'}. Topic will be retried later.`,
+        evaluationData: {},
+        evaluationMethod: 'api_failure'
+      }));
       return map;
     }
   }

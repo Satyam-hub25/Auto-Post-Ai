@@ -82,14 +82,10 @@ export class SchedulerService {
         const text = (c.title + ' ' + (c.summary || '')).toLowerCase();
         
         // Fast hard rejections for promotional/generic content
-        const blockedKeywords = ['discount', 'ticket', 'sponsor', 'event', 'playlist', 'tutorial', 'marketing', 'promo', 'career advice'];
+        const blockedKeywords = ['discount', 'ticket', 'sponsor', 'event', 'playlist', 'tutorial', 'marketing', 'promo'];
         if (blockedKeywords.some(kw => text.includes(kw))) return false;
         
-        // General question filtering
-        if (text.startsWith('ask hn:') && !text.includes('release')) return false;
-        if (text.startsWith('tell hn:') && !text.includes('release')) return false;
-        
-        if (text.length < 20) return false;
+        if (text.length < 10) return false; // Basic sanity check
         return true;
       });
       console.log(`[Cycle]   → Stage 1 complete. ${filteredCandidates.length}/${candidates.length} passed local filter.`);
@@ -111,8 +107,8 @@ export class SchedulerService {
         recentPosts
       );
 
-      // ONLY ACCEPT if score >= 80, handled natively by editorial service now, but we'll enforce the sort here
-      const accepted = evaluated.filter(e => e.status === 'ACCEPTED').sort((a, b) => b.score - a.score);
+      // ONLY ACCEPT if score >= 70
+      let accepted = evaluated.filter(e => e.status === 'ACCEPTED').sort((a, b) => b.score - a.score);
       const rejected = evaluated.filter(e => e.status === 'REJECTED');
       console.log(`[Cycle]   → Accepted: ${accepted.length}, Rejected/Considered: ${evaluated.length - accepted.length}`);
 
@@ -121,13 +117,35 @@ export class SchedulerService {
         return;
       }
 
-      const topTopic = accepted[0];
+      // ── Step 3b: MEMORY CHECK ──
+      console.log(`\n[Cycle] Step 3b/5: MEMORY CHECK (filtering duplicates)...`);
+      const strictlyAccepted = [];
+      for (const topic of accepted) {
+         const isDupe = await memoryService.isTooSimilar(topic.title, topic.summary || '', agentId);
+         if (isDupe) {
+           console.log(`[Cycle]   → Skipping "${topic.title}" (too similar to recent posts)`);
+           // Optionally update DB to REJECTED due to memory
+           await prisma.topicCandidate.update({
+             where: { id: topic.id },
+             data: { status: 'REJECTED', reason: 'Rejected due to high similarity with recently published content.' }
+           });
+         } else {
+           strictlyAccepted.push(topic);
+         }
+      }
+
+      if (strictlyAccepted.length === 0) {
+        console.log(`[Cycle]   → All accepted topics were duplicates. Waiting for next cycle.`);
+        return;
+      }
+
+      const topTopic = strictlyAccepted[0];
       console.log(`[Cycle]   → Top topic selected: "${topTopic.title}" (score: ${topTopic.score}, status: ${topTopic.status})`);
 
       // ── Step 4: WRITE POST ──
       console.log(`\n[Cycle] Step 4/5: WRITING post in persona voice...`);
       const postContent = await writerService.writePost(
-        { title: topTopic.title, summary: topTopic.summary, sourceUrl: topTopic.sourceUrl },
+        { title: topTopic.title, summary: topTopic.summary, content: topTopic._content, sourceUrl: topTopic.sourceUrl },
         systemPrompt,
         recentPosts
       );
