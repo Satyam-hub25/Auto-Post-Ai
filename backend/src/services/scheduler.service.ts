@@ -9,7 +9,6 @@ import { config } from '../config';
 
 export class SchedulerService {
   private activeJobs: Map<string, cron.ScheduledTask> = new Map();
-  private runningCycles: Set<string> = new Set(); // Prevent concurrent cycles for same agent
 
   async startAgentSchedule(agentId: string): Promise<void> {
     // Stop existing job if any
@@ -52,14 +51,15 @@ export class SchedulerService {
       console.log(`[Scheduler] Agent ${agentId}: Schedule stopped`);
     }
   }
+  private isGlobalCycleRunning: boolean = false; // Global lock to prevent ANY concurrent cycles
 
   async runCycleNow(agentId: string): Promise<void> {
-    if (this.runningCycles.has(agentId)) {
-      console.log(`[Scheduler] Agent ${agentId}: Cycle already in progress. Skipping to prevent overlap.`);
+    if (this.isGlobalCycleRunning) {
+      console.log(`[Scheduler] Global cycle already in progress. Skipping agent ${agentId} to prevent LLM rate limits.`);
       return;
     }
 
-    this.runningCycles.add(agentId);
+    this.isGlobalCycleRunning = true;
     
     const startTime = Date.now();
     console.log(`\n${'═'.repeat(60)}`);
@@ -188,7 +188,7 @@ export class SchedulerService {
       console.error(`\n[Cycle] ❌ CYCLE FAILED after ${elapsed}s:`, error);
       console.log(`${'═'.repeat(60)}\n`);
     } finally {
-      this.runningCycles.delete(agentId);
+      this.isGlobalCycleRunning = false;
     }
   }
 }
