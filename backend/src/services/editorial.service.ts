@@ -101,12 +101,13 @@ export class EditorialService {
     }
     console.log(`[DEDUP] ${candidates.length} candidates → ${dedupedCandidates.length} unique`);
 
-    // 1. Check cache first
+    // 1. Check cache first (ignore PENDING_RETRY to force re-evaluation)
     for (const candidate of dedupedCandidates) {
       const hash = this.getTopicHash(candidate);
-      if (evaluationCache.has(hash)) {
+      const cached = evaluationCache.get(hash);
+      if (cached && cached.status !== 'PENDING_RETRY') {
         console.log(`[EVALUATION] Using cached result for: "${candidate.title}"`);
-        evaluated.push({ candidate, evaluation: evaluationCache.get(hash)! });
+        evaluated.push({ candidate, evaluation: cached });
       } else {
         toEvaluateBatch.push(candidate);
       }
