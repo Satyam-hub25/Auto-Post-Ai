@@ -176,27 +176,28 @@ export class EditorialService {
 
     // 3. Sort by score descending
     evaluated.sort((a, b) => b.evaluation.score - a.evaluation.score);
-
     const results = [];
     
-    // 4. Save to DB
-    for (const item of evaluated) {
-      const savedCandidate = await prisma.topicCandidate.create({
-        data: {
-          agentId,
-          title: item.candidate.title,
-          summary: item.candidate.summary || '',
-          sourceUrl: item.candidate.sourceUrl,
-          score: item.evaluation.score,
-          status: item.evaluation.status,
-          reason: item.evaluation.reasoning,
-          evaluationData: item.evaluation.evaluationData,
-          evaluationMethod: item.evaluation.evaluationMethod,
-        },
-      });
-      // Attach the DB ID back so scheduler can link it to the Post
-      item.candidate.id = savedCandidate.id;
-      results.push({ ...savedCandidate, _content: item.candidate.content });
+    // 4. Save to DB using a single transaction to prevent connection pool timeouts
+    const dbOperations = evaluated.map(item => prisma.topicCandidate.create({
+      data: {
+        agentId,
+        title: item.candidate.title,
+        summary: item.candidate.summary || '',
+        sourceUrl: item.candidate.sourceUrl,
+        score: item.evaluation.score,
+        status: item.evaluation.status,
+        reason: item.evaluation.reasoning,
+        evaluationData: item.evaluation.evaluationData,
+        evaluationMethod: item.evaluation.evaluationMethod,
+      },
+    }));
+
+    const savedCandidates = await prisma.$transaction(dbOperations);
+
+    for (let i = 0; i < evaluated.length; i++) {
+      evaluated[i].candidate.id = savedCandidates[i].id;
+      results.push({ ...savedCandidates[i], _content: evaluated[i].candidate.content });
     }
 
     return results;
