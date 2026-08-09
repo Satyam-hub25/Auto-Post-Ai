@@ -71,15 +71,16 @@ export class EditorialService {
     }
   }
 
-  private getTopicHash(candidate: CandidateInput): string {
-    return crypto.createHash('sha256').update(this.normalizeTitle(candidate.title) + this.normalizeUrl(candidate.sourceUrl)).digest('hex');
+  private getTopicHash(candidate: CandidateInput, agentDomain: string): string {
+    return crypto.createHash('sha256').update(agentDomain.toLowerCase() + '::' + this.normalizeTitle(candidate.title) + this.normalizeUrl(candidate.sourceUrl)).digest('hex');
   }
 
   async evaluateCandidates(
     agentId: string,
     candidates: CandidateInput[],
     personaVoice: string,
-    recentPosts: any[]
+    recentPosts: any[],
+    agentDomain: string
   ): Promise<(import('@prisma/client').TopicCandidate & { _content?: string })[]> {
     const evaluated: { candidate: CandidateInput, evaluation: EvaluationOutput }[] = [];
     const toEvaluateBatch: CandidateInput[] = [];
@@ -102,8 +103,9 @@ export class EditorialService {
     console.log(`[DEDUP] ${candidates.length} candidates → ${dedupedCandidates.length} unique`);
 
     // 1. Check cache first (ignore PENDING_RETRY to force re-evaluation)
+    // Cache is keyed per agent domain so same topic can be evaluated differently per agent
     for (const candidate of dedupedCandidates) {
-      const hash = this.getTopicHash(candidate);
+      const hash = this.getTopicHash(candidate, agentDomain);
       const cached = evaluationCache.get(hash);
       if (cached && cached.status !== 'PENDING_RETRY') {
         console.log(`[EVALUATION] Using cached result for: "${candidate.title}"`);
@@ -122,7 +124,7 @@ export class EditorialService {
       for (let i = 0; i < toEvaluateBatch.length; i += CHUNK_SIZE) {
         const chunk = toEvaluateBatch.slice(i, i + CHUNK_SIZE);
         console.log(`[SCREENING] Batch screening chunk ${Math.floor(i/CHUNK_SIZE) + 1} (${chunk.length} topics)...`);
-        const chunkResults = await this.screenBatchWithRetry(chunk, personaVoice);
+        const chunkResults = await this.screenBatchWithRetry(chunk, personaVoice, agentDomain);
         
         for (const candidate of chunk) {
           const res = chunkResults.get(candidate.title);
@@ -154,21 +156,21 @@ export class EditorialService {
       if (topCandidatesToDeepEvaluate.length > 0) {
          console.log(`[DEEP EVAL] Deep evaluating top ${topCandidatesToDeepEvaluate.length} candidates...`);
          const candidatesToDeep = topCandidatesToDeepEvaluate.map(k => k.candidate);
-         const deepRes = await this.deepEvaluateBatchWithRetry(candidatesToDeep, personaVoice, recentPosts);
+         const deepRes = await this.deepEvaluateBatchWithRetry(candidatesToDeep, personaVoice, recentPosts, agentDomain);
          deepRes.forEach((v, k) => deepEvalResults.set(k, v));
       }
 
       // Combine and cache results
       for (const item of topCandidatesToDeepEvaluate) {
          const deepRes = deepEvalResults.get(item.candidate.title) || this.fallbackEvaluate(item.candidate, personaVoice, 'Missing from deep eval output');
-         const hash = this.getTopicHash(item.candidate);
+         const hash = this.getTopicHash(item.candidate, agentDomain);
          evaluationCache.set(hash, deepRes);
          evaluated.push({ candidate: item.candidate, evaluation: deepRes });
          console.log(`[EVALUATION] Deep Score: ${deepRes.score} | Decision: ${deepRes.status} | "${item.candidate.title}"`);
       }
 
       for (const item of screenedReject) {
-         const hash = this.getTopicHash(item.candidate);
+         const hash = this.getTopicHash(item.candidate, agentDomain);
          evaluationCache.set(hash, item.evaluation);
          evaluated.push(item);
          console.log(`[EVALUATION] Screen Score: ${item.evaluation.score} | Decision: ${item.evaluation.status} | "${item.candidate.title}"`);
@@ -238,6 +240,7 @@ export class EditorialService {
   async screenBatchWithRetry(
     candidates: CandidateInput[],
     personaVoice: string,
+    agentDomain: string,
     attempt = 1
   ): Promise<Map<string, EvaluationOutput>> {
     if (!groq) {
@@ -254,7 +257,19 @@ URL: ${c.sourceUrl}
 Snippet: ${c.content ? c.content.substring(0, 1000) : (c.summary?.substring(0, 200) || 'None')}
 `).join('\n');
 
-      const prompt = `You are a fast screener for a tech publication. Keep only strong, highly relevant technology topics. Reject noise, spam, duplicates, and weak content.
+      const prompt = `You are a fast screener for a specialized tech publication. Your agent's SPECIFIC DOMAIN is:
+"${agentDomain}"
+
+You must ONLY KEEP topics that have a meaningful, direct connection to this specific domain.
+Do NOT accept a topic just because it is generally "technology" or contains an AI keyword.
+Judge the ACTUAL central subject of the source content.
+Indirect or weak relevance is NOT enough.
+
+Examples of correct behavior:
+- If domain is "software engineering": KEEP programming, frameworks, architecture, DevOps, coding practices. REJECT pure business strategy, marketing, or unrelated AI research.
+- If domain is "cybersecurity": KEEP security vulnerabilities, threats, privacy, authentication. REJECT general career advice or unrelated AI topics.
+- If domain is "data science": KEEP ML, analytics, datasets, data engineering. REJECT pure frontend development or product management.
+- If domain is "product management": KEEP product strategy, startups, tech business. REJECT deep technical implementation details.
 
 PERSONA VOICE:
 ${personaVoice}
@@ -262,7 +277,7 @@ ${personaVoice}
 CANDIDATES:
 ${candidateListStr}
 
-For each candidate, respond with KEEP or REJECT, a score (0-100), and a brief 1-sentence reason.
+For each candidate, respond with KEEP or REJECT, a score (0-100), and a brief 1-sentence reason explaining why it fits or does not fit the domain "${agentDomain}".
 
 Respond ONLY with JSON in this exact format:
 {
@@ -271,7 +286,7 @@ Respond ONLY with JSON in this exact format:
       "topicId": "0",
       "decision": "KEEP",
       "score": 85,
-      "reasoning": "Strong relevance to AI software engineering."
+      "reasoning": "Directly relevant to ${agentDomain}: discusses X which is core to this domain."
     }
   ]
 }`;
@@ -330,7 +345,7 @@ Respond ONLY with JSON in this exact format:
 
       if (attempt <= 2) {
         await this.delay(2000);
-        return this.screenBatchWithRetry(candidates, personaVoice, attempt + 1);
+        return this.screenBatchWithRetry(candidates, personaVoice, agentDomain, attempt + 1);
       }
 
       const map = new Map<string, EvaluationOutput>();
@@ -343,6 +358,7 @@ Respond ONLY with JSON in this exact format:
     candidates: CandidateInput[],
     personaVoice: string,
     recentPosts: any[],
+    agentDomain: string,
     attempt = 1
   ): Promise<Map<string, EvaluationOutput>> {
     if (!groq) {
@@ -361,9 +377,20 @@ URL: ${c.sourceUrl}
 Content Preview: ${c.content ? c.content.substring(0, 1500) : (c.summary?.substring(0, 200) || 'None')}
 `).join('\n');
 
-      const prompt = `You are a technology researcher and editor evaluating topics. Judge the actual content, not just the title. Accept strong, useful topics naturally.
+      const prompt = `You are a technology researcher and editor. You are evaluating topics SPECIFICALLY for an agent whose domain is:
+"${agentDomain}"
 
-A topic is RELEVANT if it discusses: AI, software engineering, cybersecurity, developer tools, open source, cloud, databases, robotics, programming, tech careers, or technology trends. Do not reject a topic just because it does not contain "AI".
+CRITICAL RULES:
+- A topic MUST have a meaningful, direct connection to "${agentDomain}" to be accepted.
+- Do NOT accept a topic just because it is generally "technology" or contains an AI keyword.
+- Judge the ACTUAL central subject of the source content, not just the title.
+- Indirect or weak relevance to "${agentDomain}" is NOT enough — score relevance LOW.
+- The same topic may be accepted by one agent and rejected by another. This is expected.
+
+For the "relevance" criterion specifically:
+- Score 80-100: The topic's central subject directly falls within "${agentDomain}"
+- Score 50-79: The topic has some connection but is not primarily about "${agentDomain}"
+- Score 0-49: The topic is not meaningfully related to "${agentDomain}"
 
 PERSONA VOICE:
 ${personaVoice}
@@ -377,21 +404,20 @@ ${candidateListStr}
 
 EVALUATE these 5 criteria from 0-100:
 1. novelty: Does this provide something new or an interesting perspective?
-2. substance: Is there enough technical or analytical substance to write a valuable post? A good technical blog, Hacker News discussion, industry analysis, or opinion is acceptable.
-3. credibility: Is the source trustworthy? (Do not require an academic paper, GitHub repo, or famous source for every topic).
-4. relevance: Genuine technology relevance to the persona's domain?
-5. timeliness: Is this topic currently relevant or does it have strong evergreen analytical value? Avoid old/stale content without recent updates.
+2. substance: Is there enough technical or analytical substance to write a valuable post?
+3. credibility: Is the source trustworthy?
+4. relevance: Does the topic's central subject directly relate to "${agentDomain}"? (NOT general tech relevance)
+5. timeliness: Is this topic currently relevant or does it have strong evergreen analytical value?
 
 Calculate final 'score': Novelty(20%) + Substance(25%) + Credibility(20%) + Relevance(20%) + Timeliness(15%).
 
 Decision guide:
-- 70-100: ACCEPT - genuine tech relevance, enough substance, interesting angle, reasonable credibility.
-- 60-69: CONSIDER - borderline.
-- Below 60: REJECT - low value.
+- 70-100: ACCEPT - directly relevant to "${agentDomain}", enough substance, interesting angle.
+- 60-69: CONSIDER - borderline relevance to "${agentDomain}".
+- Below 60: REJECT - not relevant to "${agentDomain}" or low value.
 
-Only REJECT obvious low-value content (ads, jobs, spam, duplicates, entirely irrelevant, extremely shallow).
-Every rejection MUST have a SPECIFIC human-readable reason based on the actual content. Never use reasons like "low relevance" or "weak keywords".
-Acceptance reasons must explain why it matters, why it's interesting, and why it's worth publishing.
+Every rejection MUST explain why the topic does NOT fit the domain "${agentDomain}".
+Every acceptance MUST explain why the topic fits "${agentDomain}" and what useful analysis the agent can provide.
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -405,7 +431,7 @@ Respond ONLY with a JSON object in this exact format:
       "timeliness": 70,
       "score": 79,
       "decision": "ACCEPT",
-      "reasoning": "..."
+      "reasoning": "Directly relevant to ${agentDomain}: ..."
     }
   ]
 }`;
@@ -469,7 +495,7 @@ Respond ONLY with a JSON object in this exact format:
 
       if (attempt <= 2) {
         await this.delay(3000);
-        return this.deepEvaluateBatchWithRetry(candidates, personaVoice, recentPosts, attempt + 1);
+        return this.deepEvaluateBatchWithRetry(candidates, personaVoice, recentPosts, agentDomain, attempt + 1);
       }
 
       console.error(`[LLM ERROR] Retry exhausted or fatal error. Setting status to PENDING_RETRY.`);

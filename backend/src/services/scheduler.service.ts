@@ -113,7 +113,8 @@ export class SchedulerService {
         agentId,
         filteredCandidates, // Evaluate ALL filtered candidates
         systemPrompt,
-        recentPosts
+        recentPosts,
+        agent.domain
       );
 
       // ONLY ACCEPT if score >= 70
