@@ -30,7 +30,7 @@ The voice guide MUST define:
 Return ONLY the voice guide text, formatted as a system prompt that can be directly used to instruct an AI to write in this persona's voice. Start with "You are ${name}..."`;
 
       const response = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
       });
