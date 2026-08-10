@@ -597,7 +597,7 @@ Respond ONLY with a JSON object in this exact format:
       reasoning: '',
     };
 
-    const finalStatus = this.determineStatus(finalScore, fallbackData);
+    const finalStatus = this.determineStatus(finalScore, fallbackData, fallbackData.decision);
     fallbackData.decision = finalStatus;
 
     // Generate a SPECIFIC reason
