@@ -217,12 +217,19 @@ export class EditorialService {
   }
 
   private determineStatus(score: number, rubric: Omit<RubricResult, 'topicId' | 'score' | 'decision' | 'reasoning'>): 'ACCEPTED' | 'CONSIDER' | 'REJECTED' {
+    // STRICT DOMAIN ENFORCEMENT:
+    // No matter how good the article is (high substance/credibility), 
+    // if it's not highly relevant to THIS specific agent's domain, reject it.
+    if (rubric.relevance < 80) {
+      return 'REJECTED';
+    }
+
     // Strong accept
     if (score >= 75) return 'ACCEPTED';
 
     // Borderline (70-74): accept only when substance AND relevance are both very strong
     if (score >= 70) {
-      if (rubric.substance >= 75 && rubric.relevance >= 75) return 'ACCEPTED';
+      if (rubric.substance >= 80 && rubric.relevance >= 85) return 'ACCEPTED';
       return 'CONSIDER';
     }
 
