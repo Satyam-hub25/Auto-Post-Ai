@@ -41,10 +41,8 @@ export class HackerNewsDiscovery implements DiscoverySource {
 
   async discover(domain: string): Promise<TopicCandidate[]> {
     try {
-      // Create a domain-specific query to find relevant topics
-      const domainTerms = domain.split(/[\s,]+/).filter(t => t.length > 2).join(' OR ');
-      const query = encodeURIComponent(`(${domainTerms}) OR technology OR AI`);
-      const url = `http://hn.algolia.com/api/v1/search?query=${query}&tags=story&hitsPerPage=40`;
+      // Broadened query to catch more technology topics
+      const url = `http://hn.algolia.com/api/v1/search?query=technology OR software OR AI OR engineering&tags=story&hitsPerPage=40`;
       const response = await fetch(url);
       const data = await response.json();
       
@@ -61,7 +59,7 @@ export class HackerNewsDiscovery implements DiscoverySource {
       
       // Fetch content for top 15 to keep it fast
       for (let i = 0; i < Math.min(candidates.length, 15); i++) {
-         if (candidates[i].sourceUrl) {
+         if (candidates[i].sourceUrl && !candidates[i].sourceUrl.includes('news.ycombinator.com')) {
            candidates[i].content = await this.fetchContent(candidates[i].sourceUrl);
          }
       }

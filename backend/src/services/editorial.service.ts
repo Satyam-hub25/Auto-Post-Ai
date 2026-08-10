@@ -216,20 +216,13 @@ export class EditorialService {
     );
   }
 
-  private determineStatus(score: number, rubric: Omit<RubricResult, 'topicId' | 'score' | 'decision' | 'reasoning'>): 'ACCEPTED' | 'CONSIDER' | 'REJECTED' {
-    // Strong accept
-    if (score >= 75) return 'ACCEPTED';
-
-    // Borderline (70-74): accept only when substance AND relevance are both very strong
-    if (score >= 70) {
-      if (rubric.substance >= 80 && rubric.relevance >= 85) return 'ACCEPTED';
-      return 'CONSIDER';
-    }
-
-    // 65-69: consider but do not accept
-    if (score >= 65) return 'CONSIDER';
-
-    // Below 65
+  private determineStatus(score: number, rubric: Omit<RubricResult, 'topicId' | 'score' | 'decision' | 'reasoning'>, llmDecision: string): 'ACCEPTED' | 'CONSIDER' | 'REJECTED' {
+    // If the LLM explicitly decided ACCEPT and score is decent (>= 65), trust it.
+    if (llmDecision === 'ACCEPT' && score >= 65) return 'ACCEPTED';
+    
+    // Otherwise fallback to score thresholds
+    if (score >= 70) return 'ACCEPTED';
+    if (score >= 60) return 'CONSIDER';
     return 'REJECTED';
   }
 
@@ -377,16 +370,15 @@ URL: ${c.sourceUrl}
 Content Preview: ${c.content ? c.content.substring(0, 1500) : (c.summary?.substring(0, 200) || 'None')}
 `).join('\n');
 
-      const prompt = `You are a STRICT technology researcher and editor evaluating topics SPECIFICALLY for an agent whose domain is:
+      const prompt = `You are a technology researcher and editor. You are evaluating topics SPECIFICALLY for an agent whose domain is:
 "${agentDomain}"
 
 CRITICAL RULES:
-- You are a highly critical gatekeeper. Your goal is to find the BEST content, not just ANY content.
-- A topic MUST have a meaningful, direct, and strong connection to "${agentDomain}" to be accepted.
+- A topic MUST have a meaningful, direct connection to "${agentDomain}" to be accepted.
 - Do NOT accept a topic just because it is generally "technology" or contains an AI keyword.
 - Judge the ACTUAL central subject of the source content, not just the title.
-- If the content is weak, shallow, or only indirectly related to "${agentDomain}", you MUST score it low and REJECT it.
-- A healthy editorial pipeline rejects more often than it accepts. Do not be afraid to reject candidates.
+- Indirect or weak relevance to "${agentDomain}" is NOT enough — score relevance LOW.
+- The same topic may be accepted by one agent and rejected by another. This is expected.
 
 For the "relevance" criterion specifically:
 - Score 80-100: The topic's central subject directly falls within "${agentDomain}"
@@ -398,12 +390,12 @@ ${personaVoice}
 
 RECENT POSTS (MEMORY):
 ${recentContext || 'None yet'}
-If highly similar to an existing post, drastically reduce novelty.
+If highly similar to an existing post, reduce novelty.
 
 CANDIDATES:
 ${candidateListStr}
 
-EVALUATE these 5 criteria from 0-100. BE HARSH AND REALISTIC with your scoring:
+EVALUATE these 5 criteria from 0-100:
 1. novelty: Does this provide something new or an interesting perspective?
 2. substance: Is there enough technical or analytical substance to write a valuable post?
 3. credibility: Is the source trustworthy?
@@ -413,12 +405,12 @@ EVALUATE these 5 criteria from 0-100. BE HARSH AND REALISTIC with your scoring:
 Calculate final 'score': Novelty(20%) + Substance(25%) + Credibility(20%) + Relevance(20%) + Timeliness(15%).
 
 Decision guide:
-- 75-100: ACCEPT - directly relevant to "${agentDomain}", high substance, interesting angle.
-- 65-74: CONSIDER - borderline relevance or average substance.
-- Below 65: REJECT - not highly relevant to "${agentDomain}" or low value.
+- 70-100: ACCEPT - directly relevant to "${agentDomain}", enough substance, interesting angle.
+- 60-69: CONSIDER - borderline relevance to "${agentDomain}".
+- Below 60: REJECT - not relevant to "${agentDomain}" or low value.
 
-Every rejection MUST explain exactly why the topic does NOT fit the domain "${agentDomain}" or lacks substance.
-Every acceptance MUST explain why the topic perfectly fits "${agentDomain}" and what useful analysis the agent can provide.
+Every rejection MUST explain why the topic does NOT fit the domain "${agentDomain}".
+Every acceptance MUST explain why the topic fits "${agentDomain}" and what useful analysis the agent can provide.
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -462,8 +454,8 @@ Respond ONLY with a JSON object in this exact format:
         const idx = parseInt(evalResult.topicId);
         if (!isNaN(idx) && candidates[idx]) {
           const finalScore = this.calculateWeightedScore(evalResult);
-          // Only pass if it hits the strict sub-criteria
-          let finalStatus = this.determineStatus(finalScore, evalResult);
+          // Trust the LLM's explicit decision if the score is reasonable
+          let finalStatus = this.determineStatus(finalScore, evalResult, evalResult.decision);
           
           resultMap.set(candidates[idx].title, {
             score: finalScore,
